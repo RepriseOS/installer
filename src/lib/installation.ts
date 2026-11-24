@@ -146,6 +146,18 @@ export function failureMessage(failure: InstallFailure): {
   next: string | null;
   retry: boolean;
 } {
+  if (
+    failure.stage === "storage" &&
+    !failure.cancelled &&
+    !failure.device_stopped &&
+    /\(code -326, errno \d+\)/.test(failure.error)
+  ) {
+    return {
+      cause: "The iPod’s HFS+ volume was not cleanly unmounted. Nothing on it was changed.",
+      next: "Let the iPod boot and appear in Finder. Eject it, leave the cable connected, then enter DFU mode again.",
+      retry: false,
+    };
+  }
   const cause = failure.cancelled
     ? "You cancelled the installation."
     : failure.device_stopped
