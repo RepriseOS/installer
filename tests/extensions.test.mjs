@@ -11,7 +11,9 @@ import {
 } from "../src/lib/catalog.ts";
 import {
   availableUpdates,
+  checkExtensionMounts,
   configureExtensions,
+  ejectAndReboot,
   getExtensionsState,
   installExtension,
   installedVersion,
@@ -90,7 +92,10 @@ function simulatedDevice() {
   store("night-shift", "0.0.9", "/Revola/Extensions/");
   return {
     async read() {
-      return { device: { ...device, token: "first" }, installed: [...installed.values()] };
+      return {
+        mounts: "first",
+        snapshot: { device: { ...device, token: "first" }, installed: [...installed.values()] },
+      };
     },
     async write({ id, version }) {
       store(id, version, "/Reprise/Extensions/");
@@ -238,7 +243,7 @@ test("a failed copy does not offer a retry on a different iPod", async () => {
   let token = "first";
   const mounted = {
     async read() {
-      return { device: { ...device, token }, installed: [] };
+      return { mounts: token, snapshot: { device: { ...device, token }, installed: [] } };
     },
     async write() {
       token = "second";
@@ -250,4 +255,104 @@ test("a failed copy does not offer a retry on a different iPod", async () => {
   await installExtension("balance");
   assert.equal(getExtensionsState().device.info.token, "second");
   assert.equal(getExtensionsState().operations.balance, undefined);
+});
+
+test("eject and reboot is gated by firmware, excludes writes and keeps a failed eject retryable", async () => {
+  const mounted = simulatedDevice();
+  const read = mounted.read;
+  let supported = false;
+  mounted.read = async () => {
+    const snapshot = await read();
+    snapshot.snapshot.device.ejectReboot = supported;
+    return snapshot;
+  };
+  let attempts = 0;
+  mounted.ejectAndReboot = async (token) => {
+    assert.equal(token, "first");
+    attempts++;
+    if (attempts === 1) throw new Error("busy");
+  };
+  configureExtensions({ fetch: fakeFetch(), device: mounted, catalogUrl: base });
+  await loadExtensions();
+  await removeExtension("balance");
+  await ejectAndReboot();
+  assert.equal(attempts, 0);
+  supported = true;
+  await loadExtensions();
+  await ejectAndReboot();
+  assert.equal(getExtensionsState().eject.error, "busy");
+  assert.equal(getExtensionsState().restartNeeded, true);
+  const pending = ejectAndReboot();
+  await installExtension("balance");
+  await pending;
+  assert.equal(attempts, 2);
+  assert.equal(getExtensionsState().device.status, "absent");
+  assert.equal(getExtensionsState().eject.status, "ejected");
+  assert.equal(getExtensionsState().restartNeeded, false);
+});
+
+test("reconnecting after eject refreshes installed versions and clears the old device state", async () => {
+  const mounted = simulatedDevice();
+  const original = mounted.read;
+  let attached = true;
+  let inventories = 0;
+  mounted.read = async (known) => {
+    const mounts = attached ? "same-ipod" : "empty";
+    if (known === mounts) return null;
+    if (!attached) return { mounts, snapshot: null };
+    inventories++;
+    const { snapshot } = await original();
+    snapshot.device.ejectReboot = true;
+    return { mounts, snapshot };
+  };
+  mounted.ejectAndReboot = async () => {
+    attached = false;
+  };
+  configureExtensions({ fetch: fakeFetch(), device: mounted, catalogUrl: base });
+  await loadExtensions();
+  await removeExtension("balance");
+  await ejectAndReboot();
+  const signal = new AbortController().signal;
+  await checkExtensionMounts(signal);
+  assert.equal(getExtensionsState().eject.status, "ejected");
+  attached = true;
+  await mounted.write({ id: "balance", version: "2.0.0" });
+  await checkExtensionMounts(signal);
+  assert.equal(getExtensionsState().eject.status, "idle");
+  assert.equal(installedVersion("balance"), "2.0.0");
+  const reads = inventories;
+  const current = getExtensionsState();
+  await checkExtensionMounts(signal);
+  assert.equal(inventories, reads);
+  assert.equal(getExtensionsState(), current);
+  attached = false;
+  await checkExtensionMounts(signal);
+  assert.equal(installedVersion("balance"), undefined);
+  assert.equal(getExtensionsState().device.status, "absent");
+});
+
+test("a pending mount probe cannot undo a newer eject", async () => {
+  const mounted = simulatedDevice();
+  const read = mounted.read;
+  let finishProbe;
+  mounted.read = async (knownMounts) => {
+    const result = await read();
+    result.snapshot.device.ejectReboot = true;
+    if (knownMounts) {
+      await new Promise((resolve) => {
+        finishProbe = resolve;
+      });
+    }
+    return result;
+  };
+  mounted.ejectAndReboot = async () => {};
+  configureExtensions({ fetch: fakeFetch(), device: mounted, catalogUrl: base });
+  await loadExtensions();
+  await removeExtension("balance");
+  const pending = checkExtensionMounts(new AbortController().signal);
+  await ejectAndReboot();
+  finishProbe();
+  await pending;
+  assert.equal(getExtensionsState().device.status, "absent");
+  assert.equal(getExtensionsState().eject.status, "ejected");
 });

@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    mounts::{discover, inspect, read_mounts},
+    package::parse,
+    storage::{folder, inventory, remove, write, PRIMARY},
+    *,
+};
+use sha2::{Digest, Sha256};
+use std::fs;
 
 fn image(version: &str) -> Vec<u8> {
     let mut bytes =
@@ -112,7 +119,9 @@ fn unknown_development_can_install_and_old_release_cannot() {
 #[test]
 #[ignore = "requires a mounted RepriseOS iPod; reads only"]
 fn read_connected_ipod() {
-    let m = discover().unwrap().expect("mount a RepriseOS iPod");
+    let m = discover(&mounts::roots().unwrap())
+        .unwrap()
+        .expect("mount a RepriseOS iPod");
     println!("{:?}", m.device);
     for item in inventory(&m.root).unwrap() {
         println!("{} {} {}", item.folder, item.id, item.version);
@@ -149,4 +158,57 @@ fn local_artifacts() {
     assert!(remove(&m, "dsp", PRIMARY).is_err());
     remove(&m, "crossfeed", PRIMARY).unwrap();
     remove(&m, "dsp", PRIMARY).unwrap();
+}
+
+#[test]
+fn eject_request_requires_support_and_survives_only_a_successful_handoff() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let dir = root.join("iPod_Control/Device");
+    fs::create_dir_all(&dir).unwrap();
+    let cfw = root.join("osos-cfw.bin");
+    let mut bytes = image("Development");
+    fs::write(&cfw, &bytes).unwrap();
+    fs::write(root.join("cfw-loader.bin"), vec![0; 0x25220]).unwrap();
+    let mount = || inspect(root).unwrap().unwrap();
+    let request = dir.join("RepriseReboot1.req");
+    assert!(eject::request_reboot(&mount(), |_| panic!("unsupported")).is_err());
+    assert!(!request.exists());
+    bytes.extend_from_slice(eject::FIRMWARE_PATH);
+    fs::write(cfw, bytes).unwrap();
+    assert!(eject::request_reboot(&mount(), |_| {
+        assert_eq!(fs::read(&request).unwrap(), b"RBR1");
+        Err("busy".into())
+    })
+    .is_err());
+    assert!(!request.exists());
+    fs::write(&request, b"unrelated").unwrap();
+    assert!(eject::request_reboot(&mount(), |_| panic!("name collision")).is_err());
+    assert_eq!(fs::read(&request).unwrap(), b"unrelated");
+    fs::remove_file(&request).unwrap();
+    eject::request_reboot(&mount(), |path| {
+        assert_eq!(path, root);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(fs::read(&request).unwrap(), b"RBR1");
+}
+
+#[test]
+fn mount_probe_skips_unchanged_inventory_and_detects_removal_and_return() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let probe = |key: Option<&str>| read_mounts(vec![root.into()], key).unwrap();
+    let empty = probe(None).unwrap();
+    assert!(empty.snapshot.is_none());
+    fs::create_dir_all(root.join("iPod_Control/Device")).unwrap();
+    fs::write(root.join("osos-cfw.bin"), image("Development")).unwrap();
+    fs::write(root.join("cfw-loader.bin"), vec![0; 0x25220]).unwrap();
+    let mounted = probe(Some(&empty.mounts)).unwrap();
+    assert!(mounted.snapshot.is_some());
+    assert!(probe(Some(&mounted.mounts)).is_none());
+    fs::rename(root.join("cfw-loader.bin"), root.join("offline.bin")).unwrap();
+    assert!(probe(Some(&mounted.mounts)).unwrap().snapshot.is_none());
+    fs::rename(root.join("offline.bin"), root.join("cfw-loader.bin")).unwrap();
+    assert!(probe(Some(&empty.mounts)).unwrap().snapshot.is_some());
 }

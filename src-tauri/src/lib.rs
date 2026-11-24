@@ -44,6 +44,7 @@ pub fn run() {
             firmware::choose_firmware,
             firmware::cached_firmware,
             extensions::read_extension_device,
+            extensions::eject::eject_and_reboot,
             extensions::write_extension,
             extensions::remove_extension,
             install::install,

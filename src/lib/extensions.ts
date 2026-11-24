@@ -40,6 +40,7 @@ export interface ExtensionsState {
   };
   operations: Record<string, Operation>;
   restartNeeded: boolean;
+  eject: { status: "idle" | "ejecting" | "ejected" } | { status: "failed"; error: string };
 }
 
 const initialState: ExtensionsState = {
@@ -47,9 +48,11 @@ const initialState: ExtensionsState = {
   device: { status: "idle", info: null, installed: [] },
   operations: {},
   restartNeeded: false,
+  eject: { status: "idle" },
 };
 
 let state = initialState;
+let observedMounts: string | undefined;
 interface Services {
   fetch: typeof fetch;
   device: ExtensionDevice;
@@ -73,6 +76,7 @@ export function subscribeToExtensions(listener: () => void) {
 /** Replaces the network and device for tests and previews. */
 export function configureExtensions(next: Services) {
   dependencies = next;
+  observedMounts = undefined;
   state = initialState;
 }
 function services() {
@@ -81,7 +85,10 @@ function services() {
 }
 
 export function operationRunning(current = state) {
-  return Object.values(current.operations).some((operation) => operation.status === "running");
+  return (
+    current.eject.status === "ejecting" ||
+    Object.values(current.operations).some((operation) => operation.status === "running")
+  );
 }
 
 export async function loadExtensions() {
@@ -305,18 +312,63 @@ export async function updateAll() {
   }
 }
 
-async function refreshDevice() {
+export async function ejectAndReboot() {
+  const info = state.device.info;
+  if (
+    operationRunning() ||
+    state.device.status !== "ready" ||
+    !state.restartNeeded ||
+    !info?.ejectReboot ||
+    !info.token
+  )
+    return;
+  publish({ ...state, eject: { status: "ejecting" } });
   try {
-    const snapshot = await services().device.read();
-    const changed = snapshot?.device.token !== state.device.info?.token;
+    await services().device.ejectAndReboot(info.token);
+    observedMounts = undefined;
     publish({
       ...state,
-      ...(changed && { operations: {}, restartNeeded: false }),
+      device: { status: "absent", info: null, installed: [] },
+      operations: {},
+      restartNeeded: false,
+      eject: { status: "ejected" },
+    });
+  } catch (error) {
+    await refreshDevice();
+    if (!state.device.info || state.device.info.token === info.token) {
+      publish({ ...state, eject: { status: "failed", error: errorDetail(error) } });
+    }
+  }
+}
+
+export async function checkExtensionMounts(signal: AbortSignal) {
+  if (signal.aborted || operationRunning() || state.device.status === "loading") return;
+  await refreshDevice(signal);
+}
+
+async function refreshDevice(signal?: AbortSignal) {
+  const before = state;
+  // A mount probe can finish after a manual refresh, write, eject, or navigation.
+  const stale = () => signal && (signal.aborted || state !== before);
+  try {
+    const result = await services().device.read(signal ? observedMounts : undefined);
+    if (!result || stale()) return;
+    const { mounts, snapshot } = result;
+    const changed =
+      snapshot?.device.token !== state.device.info?.token ||
+      (snapshot !== null && observedMounts !== undefined && mounts !== observedMounts);
+    observedMounts = mounts;
+    publish({
+      ...state,
+      ...(changed && { operations: {}, restartNeeded: false, eject: { status: "idle" as const } }),
       device: snapshot
         ? { status: "ready", info: snapshot.device, installed: snapshot.installed }
         : { status: "absent", info: null, installed: [] },
     });
   } catch (error) {
+    if (stale()) return;
+    observedMounts = undefined;
+    if (state.device.status === "error" && state.device.error === errorDetail(error)) return;
     publish({
       ...state,
       device: { info: null, installed: [], status: "error", error: errorDetail(error) },

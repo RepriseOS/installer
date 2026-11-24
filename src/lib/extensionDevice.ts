@@ -17,27 +17,35 @@ export interface DeviceSnapshot {
   installed: InstalledExtension[];
 }
 
+interface DeviceRead {
+  mounts: string;
+  snapshot: DeviceSnapshot | null;
+}
+
 /** Storage operations on a mounted iPod. */
 export interface ExtensionDevice {
-  /** Null when no RepriseOS iPod is mounted. */
-  read(): Promise<DeviceSnapshot | null>;
+  /** Null when the supplied mount signature still matches. */
+  read(knownMounts?: string): Promise<DeviceRead | null>;
   write(
     extension: Pick<InstalledExtension, "id" | "version">,
     data: ArrayBuffer,
     sha256: string,
     token?: string,
   ): Promise<void>;
+  ejectAndReboot(token: string): Promise<void>;
   remove(id: string, folder: ExtensionFolder, token?: string): Promise<void>;
 }
 
 export const mountedDevice: ExtensionDevice = {
-  async read() {
-    if (!backendAvailable()) return null;
-    const snapshot = await invoke<(DeviceSnapshot & { token: string }) | null>(
-      "read_extension_device",
-    );
-    if (snapshot) snapshot.device.token = snapshot.token;
-    return snapshot;
+  async read(knownMounts) {
+    if (!backendAvailable())
+      return knownMounts === "preview" ? null : { mounts: "preview", snapshot: null };
+    const result = await invoke<{
+      mounts: string;
+      snapshot: (DeviceSnapshot & { token: string }) | null;
+    } | null>("read_extension_device", { knownMounts });
+    if (result?.snapshot) result.snapshot.device.token = result.snapshot.token;
+    return result;
   },
   async write(extension, data, sha256, token) {
     await invoke("write_extension", {
@@ -49,6 +57,9 @@ export const mountedDevice: ExtensionDevice = {
         data: Array.from(new Uint8Array(data)),
       },
     });
+  },
+  async ejectAndReboot(token) {
+    await invoke("eject_and_reboot", { token });
   },
   async remove(id, folder, token) {
     await invoke("remove_extension", { token, id, folder });

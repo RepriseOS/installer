@@ -50,6 +50,7 @@ pub(super) fn identify(payload: &[u8], model: String) -> Option<DeviceInfo> {
     let capabilities = capabilities(payload);
     Some(DeviceInfo {
         model,
+        eject_reboot: locate(payload, super::eject::FIRMWARE_PATH).is_some(),
         repriseos: version.into(),
         revision: revision.map(str::to_owned),
         api: capabilities.map(|(api, _)| format!("{}.{}", api >> 16, api & 0xffff)),

@@ -55,6 +55,7 @@ export interface DeviceInfo {
   firmwareId: string | null;
   revision?: string | null;
   token?: string;
+  ejectReboot?: boolean;
 }
 
 export const categoryLabels: Record<Category, string> = {
