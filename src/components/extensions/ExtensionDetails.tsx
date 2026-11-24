@@ -17,6 +17,7 @@ import { Button } from "../ui/Button";
 import { ExtensionIcon } from "../ui/ExtensionIcon";
 import { ExternalLink } from "../ui/ExternalLink";
 import { useExtensionOperation } from "./OperationStatus";
+import { ScreenshotCarousel } from "./ScreenshotCarousel";
 import { StabilityChip } from "./StabilityChip";
 
 interface IExtensionDetailsProps {
@@ -109,20 +110,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
         <div className="min-w-0 flex-[999_1_360px]">
           <p className="text-[15px] leading-[1.85] text-body">{entry.description}</p>
           <p className="mt-3 text-[13px] leading-[1.85] text-body">{entry.details}</p>
-          {entry.screenshots.map((screenshot) => (
-            <figure
-              key={screenshot.url}
-              className="mt-6 flex justify-center rounded-2xl border border-[#d5d2cc] bg-white/45 px-6 py-7"
-            >
-              <img
-                className="h-auto w-full max-w-80 rounded-[3px] shadow-[0_0_0_6px_#1d1d1f,0_6px_16px_#29241c40]"
-                src={screenshot.url}
-                alt={screenshot.alt}
-                width={screenshot.width}
-                height={screenshot.height}
-              />
-            </figure>
-          ))}
+          <ScreenshotCarousel key={entry.id} screenshots={entry.screenshots} />
         </div>
         <aside className="min-w-0 flex-[1_1_240px]">
           <dl className="installer-well grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2.5 rounded-lg p-4 text-[12px]">
