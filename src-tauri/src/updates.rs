@@ -14,9 +14,8 @@ use tauri::{ipc::Channel, AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-const FEED: &str =
-    "https://github.com/lgreitis/repriseos-installer/releases/latest/download/latest.json";
-const DOWNLOAD_PAGE: &str = "https://github.com/lgreitis/repriseos-installer/releases/latest";
+const FEED: &str = "https://github.com/RepriseOS/installer/releases/latest/download/latest.json";
+const DOWNLOAD_PAGE: &str = "https://github.com/RepriseOS/installer/releases/latest";
 
 #[derive(Default)]
 pub struct UpdateState {
