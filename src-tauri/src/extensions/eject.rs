@@ -1,14 +1,9 @@
 use super::{
     mounts::{inspect, selected},
-    storage::regular,
+    storage::{regular, write_file},
     Mount, Result, EDIT,
 };
-use std::{
-    fs,
-    io::{Read, Write},
-    path::Path,
-    process::Command,
-};
+use std::{fs, io::Read, path::Path, process::Command};
 
 pub(super) const FIRMWARE_PATH: &[u8] = b"iPod_Control\\Device\\RepriseReboot1.req\0";
 const REQUEST: &[u8; 4] = b"RBR1";
@@ -27,20 +22,14 @@ pub(super) fn request_reboot(mount: &Mount, eject: impl FnOnce(&Path) -> Result<
     }
     let dir = mount.root.join("iPod_Control/Device");
     let path = dir.join("RepriseReboot1.req");
-    // Publish the complete request without replacing an unrelated file.
-    let mut tmp = tempfile::NamedTempFile::new_in(&dir).map_err(|e| e.to_string())?;
-    tmp.write_all(REQUEST)
-        .and_then(|()| tmp.as_file().sync_all())
-        .map_err(|e| e.to_string())?;
-    match tmp.persist_noclobber(&path) {
-        Ok(file) => drop(file),
-        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            drop(e);
+    match write_file(&path, REQUEST, false) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             if !is_request(&path)? {
                 return Err("Another file occupies the reboot request path.".into());
             }
         }
-        Err(e) => return Err(e.error.to_string()),
+        Err(e) => return Err(e.to_string()),
     }
     if let Err(error) = eject(&mount.root) {
         if inspect(&mount.root)?.is_some_and(|current| current.token == mount.token)

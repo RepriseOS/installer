@@ -5,7 +5,7 @@ use super::{
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, Metadata},
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -33,6 +33,36 @@ pub(super) fn regular(path: &Path) -> Result<File> {
 
 pub(super) fn directory(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !link(&m))
+}
+
+pub(super) fn write_file(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
+    let dir = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    if replace {
+        return tmp.persist(path).map(drop).map_err(|e| e.error);
+    }
+    match tmp.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        // Darwin's FAT driver returns ENOTSUP for an exclusive rename.
+        // Reserve the name exclusively, then rename the complete file over it.
+        #[cfg(target_os = "macos")]
+        Err(e)
+            if e.error.raw_os_error() == Some(45)
+                || e.error.kind() == io::ErrorKind::Unsupported =>
+        {
+            let reservation = File::create_new(path)?;
+            let result = e.file.persist(path);
+            drop(reservation);
+            if let Err(e) = result {
+                fs::remove_file(path)?;
+                return Err(e.error);
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.error),
+    }
 }
 
 pub(super) fn folder(root: &Path, which: &str, create: bool) -> Result<Option<PathBuf>> {
@@ -128,16 +158,7 @@ pub(super) fn write(mount: &Mount, request: WritePackage) -> Result<()> {
     let path = existing
         .map(|e| e.path.clone())
         .unwrap_or_else(|| dir.join(format!("{}.rvx", pkg.id)));
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
-    tmp.write_all(&request.data).map_err(|e| e.to_string())?;
-    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
-    if existing.is_some() {
-        tmp.persist(path)
-    } else {
-        tmp.persist_noclobber(path)
-    }
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    write_file(&path, &request.data, existing.is_some()).map_err(|e| e.to_string())
 }
 
 pub(super) fn remove(mount: &Mount, id: &str, which: &str) -> Result<()> {
