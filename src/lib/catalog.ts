@@ -1,6 +1,6 @@
 export const catalogUrl =
   (import.meta.env?.VITE_EXTENSION_CATALOG_URL as string | undefined) ||
-  "https://raw.githubusercontent.com/RepriseOS/repriseos-extensions/catalog/catalog-v1.json";
+  "https://raw.githubusercontent.com/RepriseOS/extensions/catalog/catalog-v1.json";
 
 export interface CatalogFile {
   url: string;
@@ -86,8 +86,12 @@ export function parseCatalog(document: unknown, base: string): CatalogEntry[] {
   }));
 }
 
-export async function fetchCatalog(fetchImpl: typeof fetch = fetch, url: string = catalogUrl) {
-  const response = await fetchImpl(url, { cache: "no-cache" });
+export async function fetchCatalog(
+  fetchImpl: typeof fetch = fetch,
+  url: string = catalogUrl,
+  signal?: AbortSignal,
+) {
+  const response = await fetchImpl(url, { cache: "no-cache", signal });
   if (!response.ok) throw new Error(`The extension catalog is unavailable (${response.status}).`);
   return parseCatalog(await response.json(), url);
 }

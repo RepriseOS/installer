@@ -94,7 +94,6 @@ export function operationRunning(current = state) {
 export async function loadExtensions() {
   if (operationRunning() || state.catalog.status === "loading" || state.device.status === "loading")
     return;
-  const { fetch: fetchImpl, catalogUrl } = services();
   publish({
     ...state,
     operations: Object.fromEntries(
@@ -103,22 +102,24 @@ export async function loadExtensions() {
     catalog: { ...state.catalog, status: "loading", error: undefined },
     device: { ...state.device, status: "loading", error: undefined },
   });
-  await Promise.all([
-    fetchCatalog(fetchImpl, catalogUrl).then(
-      (entries) => {
-        appendSessionLog(`Extension catalog loaded: ${entries.length} entries.`);
-        publish({ ...state, catalog: { status: "ready", entries } });
-      },
-      (error: unknown) => {
-        appendSessionLog(`Extension catalog failed: ${errorDetail(error)}`);
-        publish({
-          ...state,
-          catalog: { ...state.catalog, status: "error", error: errorDetail(error) },
-        });
-      },
-    ),
-    refreshDevice(),
-  ]);
+  await Promise.all([refreshCatalog(), refreshDevice()]);
+}
+
+export async function refreshCatalog(signal?: AbortSignal) {
+  const before = state.catalog;
+  if (signal && (signal.aborted || before.status !== "ready" || operationRunning())) return;
+  const { fetch: fetchImpl, catalogUrl } = services();
+  try {
+    const entries = await fetchCatalog(fetchImpl, catalogUrl, signal);
+    if (signal?.aborted || state.catalog !== before) return;
+    if (!signal) appendSessionLog(`Extension catalog loaded: ${entries.length} entries.`);
+    publish({ ...state, catalog: { status: "ready", entries } });
+  } catch (error) {
+    if (signal?.aborted || state.catalog !== before) return;
+    const detail = errorDetail(error);
+    appendSessionLog(`Extension catalog failed: ${detail}`);
+    if (!signal) publish({ ...state, catalog: { ...before, status: "error", error: detail } });
+  }
 }
 
 /** The loader uses the first valid copy in path order, with /Reprise first. */

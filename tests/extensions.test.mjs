@@ -18,6 +18,7 @@ import {
   installExtension,
   installedVersion,
   loadExtensions,
+  refreshCatalog,
   removeExtension,
 } from "../src/lib/extensions.ts";
 
@@ -74,6 +75,31 @@ function fakeFetch(overrides = {}) {
     return data ? new Response(data) : new Response("missing", { status: 404 });
   };
 }
+
+test("an open catalog picks up new screenshots and keeps them if the next refresh fails", async () => {
+  const shot = (name) => ({ url: `assets/${name}.png`, alt: name });
+  let listing = entry("night-shift", { screenshots: [shot("picker")] });
+  const fetch = async () => {
+    if (!listing) throw new Error("offline");
+    return Response.json({ schema_version: 1, extensions: [listing] });
+  };
+  configureExtensions({ fetch, device: simulatedDevice(), catalogUrl: base });
+  await loadExtensions();
+  const device = getExtensionsState().device;
+  listing = entry("night-shift", { version: "0.1.1", screenshots: [shot("on"), shot("off")] });
+  const { signal } = new AbortController();
+  await refreshCatalog(signal);
+  const catalog = getExtensionsState().catalog;
+  assert.equal(catalog.entries[0].version, "0.1.1");
+  assert.deepEqual(
+    catalog.entries[0].screenshots.map((s) => s.url),
+    [new URL("assets/on.png", base).href, new URL("assets/off.png", base).href],
+  );
+  assert.equal(getExtensionsState().device, device);
+  listing = null;
+  await refreshCatalog(signal);
+  assert.equal(getExtensionsState().catalog, catalog);
+});
 
 function simulatedDevice() {
   const installed = new Map();
