@@ -1,7 +1,12 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import React from "react";
 import { cn } from "../../lib/cn";
-import { dismissOperation, type Operation } from "../../lib/extensions";
+import {
+  dismissOperation,
+  installExtension,
+  type Operation,
+  removeExtension,
+} from "../../lib/extensions";
 import { Button } from "../ui/Button";
 import { CheckStatusIndicator } from "../ui/CheckList";
 
@@ -41,7 +46,7 @@ const OperationStatus: React.FC<IOperationStatusProps> = ({
         event.stopPropagation();
         onToggle();
       }}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded text-xs text-[#aa3e36] hover:underline focus-visible:outline-2 focus-visible:outline-focus"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded text-xs text-error hover:underline focus-visible:outline-2 focus-visible:outline-focus"
     >
       <CheckStatusIndicator status="failed" />
       <span role="status">Failed</span>
@@ -68,7 +73,6 @@ interface IOperationStepsProps {
   operationId: string;
   operation: Operation;
   expanded: boolean;
-  onRetry?: () => void;
   className?: string;
 }
 
@@ -77,7 +81,6 @@ const OperationSteps: React.FC<IOperationStepsProps> = ({
   operationId,
   operation,
   expanded,
-  onRetry,
   className,
 }) => {
   const reducedMotion = useReducedMotion();
@@ -100,7 +103,7 @@ const OperationSteps: React.FC<IOperationStepsProps> = ({
                   className={cn(
                     "flex min-h-7 items-center gap-2.5 text-[12px]",
                     step.status === "pending" && "text-muted",
-                    step.status === "failed" && "text-[#aa3e36]",
+                    step.status === "failed" && "text-error",
                   )}
                 >
                   <CheckStatusIndicator status={step.status} />
@@ -110,24 +113,28 @@ const OperationSteps: React.FC<IOperationStepsProps> = ({
               ))}
             </ul>
             {operation.error && (
-              <p className="mt-1.5 text-[12px] leading-5 text-[#aa3e36]">{operation.error}</p>
+              <p className="mt-1.5 text-[12px] leading-5 text-error">{operation.error}</p>
             )}
-            {operation.status === "failed" && (
-              <div className="mt-2 flex gap-2 pb-1">
-                {onRetry && (
-                  <Button.Root size="compact" className="h-8 text-[12px]" onClick={onRetry}>
-                    <Button.Label>Try again</Button.Label>
-                  </Button.Root>
-                )}
-                <Button.Root
-                  size="compact"
-                  className="h-8 text-[12px]"
-                  onClick={() => dismissOperation(operationId)}
-                >
-                  <Button.Label>OK</Button.Label>
-                </Button.Root>
-              </div>
-            )}
+            <div className="mt-2 flex gap-2 pb-1">
+              <Button.Root
+                size="compact"
+                className="h-8 text-[12px]"
+                onClick={() =>
+                  void (operation.kind === "remove"
+                    ? removeExtension(operationId)
+                    : installExtension(operationId))
+                }
+              >
+                <Button.Label>Try again</Button.Label>
+              </Button.Root>
+              <Button.Root
+                size="compact"
+                className="h-8 text-[12px]"
+                onClick={() => dismissOperation(operationId)}
+              >
+                <Button.Label>OK</Button.Label>
+              </Button.Root>
+            </div>
           </div>
         </motion.div>
       )}
@@ -135,14 +142,37 @@ const OperationSteps: React.FC<IOperationStepsProps> = ({
   );
 };
 
-/** Starts collapsed and opens by itself when something fails. */
-function useOperationExpansion(operation: Operation | undefined) {
+export function useExtensionOperation(
+  id: string,
+  operation: Operation | undefined,
+  className: string,
+) {
+  const controls = React.useId();
   const [expanded, setExpanded] = React.useState(false);
   const status = operation?.status;
   React.useEffect(() => {
     setExpanded(status === "failed");
   }, [status]);
-  return [expanded, setExpanded] as const;
-}
 
-export { OperationStatus, OperationSteps, useOperationExpansion };
+  return {
+    indicator:
+      operation && status !== "done" ? (
+        <OperationStatus
+          operation={operation}
+          expanded={expanded}
+          controls={controls}
+          onToggle={() => setExpanded(!expanded)}
+        />
+      ) : null,
+    steps:
+      operation && status === "failed" ? (
+        <OperationSteps
+          id={controls}
+          operationId={id}
+          operation={operation}
+          expanded={expanded}
+          className={className}
+        />
+      ) : null,
+  };
+}

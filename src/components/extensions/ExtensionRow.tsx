@@ -12,7 +12,7 @@ import {
 import { Button } from "../ui/Button";
 import { ExtensionIcon } from "../ui/ExtensionIcon";
 import { ExternalLink } from "../ui/ExternalLink";
-import { OperationStatus, OperationSteps, useOperationExpansion } from "./OperationStatus";
+import { useExtensionOperation } from "./OperationStatus";
 import { StabilityChip } from "./StabilityChip";
 
 interface IExtensionRowProps {
@@ -26,14 +26,11 @@ interface IExtensionRowProps {
 
 const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode, onOpen }) => {
   const id = entry?.id ?? copies?.[0]?.id ?? "";
-  const operation = state.operations[id];
-  const completed = operation?.status === "done";
-  const [expanded, setExpanded] = useOperationExpansion(operation);
+  const { indicator, steps } = useExtensionOperation(id, state.operations[id], "pb-3 pl-[66px]");
   const status = entry ? entryStatus(entry, state) : null;
   const busy = operationRunning(state);
   const deviceReady = state.device.status === "ready";
   const legacy = copies?.some((copy) => copy.folder === "/Revola/Extensions/");
-  const stepsId = `extension-steps-${id}`;
 
   const version = status?.installed ?? copies?.[0]?.version ?? entry?.version;
   const versionText = entry
@@ -87,11 +84,7 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
             )}
             <span className="text-[12px] text-body">{versionText}</span>
             {entry?.stability && <StabilityChip stability={entry.stability} />}
-            {legacy && (
-              <span className="rounded-full border border-[#d7c39c] bg-[#f8efdf] px-2 text-[10.5px] text-[#7a5a24]">
-                In /Revola/Extensions/
-              </span>
-            )}
+            {legacy && <span className="extension-chip">In /Revola/Extensions/</span>}
           </p>
           {entry && (
             <>
@@ -103,70 +96,53 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
             </>
           )}
         </div>
-        {operation && !completed ? (
-          <OperationStatus
-            operation={operation}
-            expanded={expanded}
-            onToggle={() => setExpanded(!expanded)}
-            controls={stepsId}
-          />
-        ) : mode === "browse" && status?.compatibility?.compatible === false ? (
-          <span className="shrink-0 whitespace-nowrap text-[12px] text-body">
-            {status.compatibility.summary}
-          </span>
-        ) : (
-          <div className="flex shrink-0 items-center gap-3">
-            {label && (
-              <span
-                className={cn(
-                  "flex max-w-44 items-center gap-1.5 text-right text-[12px]",
-                  label.tone === "ok" && "text-[#4c7a50]",
-                  label.tone === "update" && "text-[#2f6ea3]",
-                  label.tone === "warn" && "text-[#7a5a24]",
-                )}
-              >
+        {indicator ??
+          (mode === "browse" && status?.compatibility?.compatible === false ? (
+            <span className="shrink-0 whitespace-nowrap text-[12px] text-body">
+              {status.compatibility.summary}
+            </span>
+          ) : (
+            <div className="flex shrink-0 items-center gap-3">
+              {label && (
                 <span
                   className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    label.tone === "ok" && "bg-[#609064]",
-                    label.tone === "update" && "bg-[#3e89c5]",
-                    label.tone === "warn" && "bg-[#bd8b3d]",
+                    "flex max-w-44 items-center gap-1.5 text-right text-[12px]",
+                    label.tone === "ok" && "text-[#4c7a50]",
+                    label.tone === "update" && "text-[#2f6ea3]",
+                    label.tone === "warn" && "text-[#7a5a24]",
                   )}
-                />
-                {label.text}
-              </span>
-            )}
-            {action && (
-              <Button.Root
-                size="compact"
-                className="h-8 min-w-20 px-3.5 text-[12px]"
-                disabled={busy || !deviceReady}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (action === "remove") void removeExtension(id);
-                  else void installExtension(id);
-                }}
-              >
-                <Button.Label>
-                  {action === "install" ? "Install" : action === "update" ? "Update" : "Remove"}
-                </Button.Label>
-              </Button.Root>
-            )}
-          </div>
-        )}
+                >
+                  <span
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      label.tone === "ok" && "bg-[#609064]",
+                      label.tone === "update" && "bg-[#3e89c5]",
+                      label.tone === "warn" && "bg-[#bd8b3d]",
+                    )}
+                  />
+                  {label.text}
+                </span>
+              )}
+              {action && (
+                <Button.Root
+                  size="compact"
+                  className="h-8 min-w-20 px-3.5 text-[12px]"
+                  disabled={busy || !deviceReady}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (action === "remove") void removeExtension(id);
+                    else void installExtension(id);
+                  }}
+                >
+                  <Button.Label>
+                    {action === "install" ? "Install" : action === "update" ? "Update" : "Remove"}
+                  </Button.Label>
+                </Button.Root>
+              )}
+            </div>
+          ))}
       </div>
-      {operation?.status === "failed" && (
-        <OperationSteps
-          id={stepsId}
-          operationId={id}
-          operation={operation}
-          expanded={expanded}
-          className="pb-3 pl-[66px]"
-          onRetry={() =>
-            void (operation.kind === "remove" ? removeExtension(id) : installExtension(id))
-          }
-        />
-      )}
+      {steps}
     </li>
   );
 };

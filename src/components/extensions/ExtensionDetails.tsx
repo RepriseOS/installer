@@ -16,7 +16,7 @@ import {
 import { Button } from "../ui/Button";
 import { ExtensionIcon } from "../ui/ExtensionIcon";
 import { ExternalLink } from "../ui/ExternalLink";
-import { OperationStatus, OperationSteps, useOperationExpansion } from "./OperationStatus";
+import { useExtensionOperation } from "./OperationStatus";
 import { StabilityChip } from "./StabilityChip";
 
 interface IExtensionDetailsProps {
@@ -27,9 +27,11 @@ interface IExtensionDetailsProps {
 
 const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOpen }) => {
   const status = entryStatus(entry, state);
-  const operation = state.operations[entry.id];
-  const completed = operation?.status === "done";
-  const [expanded, setExpanded] = useOperationExpansion(operation);
+  const { indicator, steps } = useExtensionOperation(
+    entry.id,
+    state.operations[entry.id],
+    "mt-3 ml-auto max-w-105",
+  );
   const busy = operationRunning(state);
   const deviceReady = state.device.status === "ready";
   const compatible = !status.compatibility || status.compatibility.compatible;
@@ -70,7 +72,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
           {entry.note && <p className="mt-0.5 text-[12px] text-body">{entry.note}</p>}
         </div>
         <div className="flex flex-col items-end gap-2">
-          {(!operation || completed) && (
+          {!indicator && (
             <div className="flex gap-2">
               {status.installed && (
                 <Button.Root
@@ -90,14 +92,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
               )}
             </div>
           )}
-          {operation && !completed ? (
-            <OperationStatus
-              operation={operation}
-              expanded={expanded}
-              onToggle={() => setExpanded(!expanded)}
-              controls="extension-detail-steps"
-            />
-          ) : (
+          {indicator ?? (
             <p className="text-[12px] text-body">
               {status.compatibility && !status.compatibility.compatible
                 ? status.compatibility.reason
@@ -108,20 +103,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
           )}
         </div>
       </div>
-      {operation?.status === "failed" && (
-        <OperationSteps
-          id="extension-detail-steps"
-          operationId={entry.id}
-          operation={operation}
-          expanded={expanded}
-          className="mt-3 ml-auto max-w-105"
-          onRetry={() =>
-            void (operation.kind === "remove"
-              ? removeExtension(entry.id)
-              : installExtension(entry.id))
-          }
-        />
-      )}
+      {steps}
 
       <div className="mt-8 flex flex-wrap gap-8">
         <div className="min-w-0 flex-[999_1_360px]">
