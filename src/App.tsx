@@ -3,6 +3,7 @@ import React from "react";
 import { DeviceChecksScreen } from "./components/DeviceChecksScreen";
 import { DfuScreen } from "./components/DfuScreen";
 import { DisclaimerScreen } from "./components/DisclaimerScreen";
+import { ExtensionsScreen } from "./components/extensions/ExtensionsScreen";
 import { FirmwareScreen } from "./components/FirmwareScreen";
 import { InstallationScreen } from "./components/InstallationScreen";
 import { InstallerUpdates } from "./components/InstallerUpdates";
@@ -26,7 +27,8 @@ export type Screen =
   | "dfu"
   | "checks"
   | "installation"
-  | "success";
+  | "success"
+  | "extensions";
 
 interface AppProps {
   initial?: {
@@ -76,7 +78,11 @@ const App: React.FC<AppProps> = ({ initial }) => {
         <AnimatePresence mode="wait" onExitComplete={() => scrollRef.current?.scrollTo({ top: 0 })}>
           <motion.div
             key={screen}
-            className="my-auto w-full max-w-160 shrink-0"
+            className={
+              screen === "extensions"
+                ? "mb-auto w-full shrink-0"
+                : "my-auto w-full max-w-160 shrink-0"
+            }
             initial={{ opacity: 0, y: reducedMotion || screen === "dfu" ? 0 : 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: reducedMotion ? 0 : -8 }}
@@ -86,6 +92,10 @@ const App: React.FC<AppProps> = ({ initial }) => {
               <MainScreen
                 updates={<InstallerUpdates />}
                 installDisabled={updateIsBusy(updater.status)}
+                onManageExtensions={() => {
+                  appendSessionLog("Extension management opened.");
+                  setScreen("extensions");
+                }}
                 onInstall={() => {
                   appendSessionLog("New setup started.");
                   setFirmware(null);
@@ -157,6 +167,8 @@ const App: React.FC<AppProps> = ({ initial }) => {
                 onRetry={beginInstall}
                 onBack={() => setScreen("main")}
               />
+            ) : screen === "extensions" ? (
+              <ExtensionsScreen onBack={() => setScreen("main")} />
             ) : (
               <SuccessScreen onDone={() => setScreen("main")} />
             )}
@@ -181,7 +193,7 @@ const App: React.FC<AppProps> = ({ initial }) => {
         </span>{" "}
         Support on Ko-fi
       </a>
-      <DebugLog entries={logs} />
+      {screen !== "extensions" && <DebugLog entries={logs} />}
       {import.meta.env.DEV && !initial && screen === "main" && !updateIsBusy(updater.status) && (
         <a
           href="?dev-panel"

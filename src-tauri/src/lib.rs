@@ -1,4 +1,5 @@
 mod device;
+mod extensions;
 mod firmware;
 mod install;
 mod package;
@@ -42,6 +43,9 @@ pub fn run() {
             package::prepare_package,
             firmware::choose_firmware,
             firmware::cached_firmware,
+            extensions::read_extension_device,
+            extensions::write_extension,
+            extensions::remove_extension,
             install::install,
             install::diagnostics::save_debug_zip,
             updates::check_installer_update,

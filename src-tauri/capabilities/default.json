@@ -10,6 +10,9 @@
       "allow": [
         {
           "url": "https://ko-fi.com/lgreitis"
+        },
+        {
+          "url": "https://github.com/*"
         }
       ]
     }
