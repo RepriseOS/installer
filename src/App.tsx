@@ -37,9 +37,19 @@ interface AppProps {
   };
 }
 
+const disclaimerKey = "disclaimerAcknowledged";
+
 const App: React.FC<AppProps> = ({ initial }) => {
   const updater = React.useSyncExternalStore(subscribeToUpdates, getUpdateState);
   const [screen, setScreen] = React.useState<Screen>(initial?.screen ?? "main");
+  const [disclaimerAcknowledged, setDisclaimerAcknowledged] = React.useState(() => {
+    if (initial) return false;
+    try {
+      return localStorage.getItem(disclaimerKey) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [firmware, setFirmware] = React.useState<FirmwareInfo | null>(initial?.firmware ?? null);
   const [localPackage, setLocalPackage] = React.useState<PackageInfo | null>(
     initial?.localPackage ?? null,
@@ -81,12 +91,20 @@ const App: React.FC<AppProps> = ({ initial }) => {
                   setFirmware(null);
                   setLocalPackage(null);
                   setPackageDigest("");
-                  setScreen("disclaimer");
+                  setScreen(disclaimerAcknowledged ? "firmware" : "disclaimer");
                 }}
               />
             ) : screen === "disclaimer" ? (
               <DisclaimerScreen
                 onContinue={() => {
+                  setDisclaimerAcknowledged(true);
+                  if (!initial) {
+                    try {
+                      localStorage.setItem(disclaimerKey, "true");
+                    } catch {
+                      appendSessionLog("Could only remember the warning for this session.");
+                    }
+                  }
                   appendSessionLog("Installation disclaimer acknowledged.");
                   setScreen("firmware");
                 }}
@@ -107,7 +125,7 @@ const App: React.FC<AppProps> = ({ initial }) => {
                   setPackageDigest(digest);
                   setScreen("permissions");
                 }}
-                onBack={() => setScreen("disclaimer")}
+                onBack={() => setScreen("main")}
               />
             ) : screen === "permissions" ? (
               <UsbPermissionsScreen
