@@ -3,6 +3,7 @@ import React from "react";
 import { Button } from "./ui/Button";
 import { HoldButton } from "./ui/HoldButton";
 import { InstallerScreen } from "./ui/InstallerScreen";
+import { ReadyReveal } from "./ui/ScreenReveal";
 import { WarningSymbol } from "./ui/WarningSymbol";
 
 interface IDisclaimerScreenProps {
@@ -78,13 +79,7 @@ const DisclaimerScreen: React.FC<IDisclaimerScreenProps> = ({ onContinue, onQuit
           ))}
         <WarningSymbol />
       </motion.div>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: ready ? 1 : 0 }}
-        transition={{ duration: reducedMotion ? 0 : 0.5 }}
-        inert={!ready}
-        aria-hidden={!ready}
-      >
+      <ReadyReveal ready={ready}>
         <InstallerScreen.Title id="disclaimer-title">Before you install.</InstallerScreen.Title>
         <InstallerScreen.Description>
           You’re installing unfinished software.{" "}
@@ -113,7 +108,7 @@ const DisclaimerScreen: React.FC<IDisclaimerScreenProps> = ({ onContinue, onQuit
             Release to cancel. With the button focused, hold Space or Enter.
           </span>
         </p>
-      </motion.div>
+      </ReadyReveal>
     </InstallerScreen.Root>
   );
 };

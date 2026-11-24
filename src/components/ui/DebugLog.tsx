@@ -2,11 +2,10 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { motion, useReducedMotion } from "framer-motion";
 import React from "react";
 
-interface IDebugLogProps {
-  entries: string[];
-}
+import { getSessionLog, subscribeToSessionLog } from "../../lib/sessionLog";
 
-const DebugLog: React.FC<IDebugLogProps> = ({ entries }) => {
+const DebugLog: React.FC = () => {
+  const entries = React.useSyncExternalStore(subscribeToSessionLog, getSessionLog);
   const [open, setOpen] = React.useState(false);
   const reducedMotion = useReducedMotion();
   const [copyStatus, setCopyStatus] = React.useState("Copy log");
@@ -14,7 +13,7 @@ const DebugLog: React.FC<IDebugLogProps> = ({ entries }) => {
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const followLogRef = React.useRef(true);
   const panelId = React.useId();
-  const logText = entries.join("\n");
+  const logText = React.useMemo(() => (open ? entries.join("\n") : ""), [open, entries]);
   const close = React.useCallback(() => {
     setOpen(false);
     triggerRef.current?.focus();

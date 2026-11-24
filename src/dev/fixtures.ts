@@ -1,5 +1,5 @@
 import type { DeviceInfo } from "../lib/deviceChecks.ts";
-import type { FirmwareInfo } from "../lib/installation.ts";
+import type { FirmwareInfo } from "../lib/firmware.ts";
 import type { PackageInfo } from "../lib/package.ts";
 
 export const mockDevice: DeviceInfo = {

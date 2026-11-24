@@ -2,12 +2,12 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import React from "react";
 import { useHeadingFocus } from "../hooks/useHeadingFocus";
 import { errorDetail } from "../lib/errors";
-import { cachedFirmware, chooseFirmware, type FirmwareInfo } from "../lib/installation";
+import { cachedFirmware, chooseFirmware, type FirmwareInfo } from "../lib/firmware";
 import { chooseLocalPackage, type PackageInfo, preparePackage } from "../lib/package";
 import { appendSessionLog } from "../lib/sessionLog";
+import { LocalPackagePicker } from "./LocalPackagePicker";
 import { Button } from "./ui/Button";
 import { CheckStatusIndicator } from "./ui/CheckList";
-import { HelpDisclosure } from "./ui/HelpDisclosure";
 import { InformationSymbol } from "./ui/InformationSymbol";
 import { InstallerScreen } from "./ui/InstallerScreen";
 import { ScreenReveal } from "./ui/ScreenReveal";
@@ -192,82 +192,25 @@ const FirmwareScreen: React.FC<IFirmwareScreenProps> = ({
                 animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: reducedMotion ? 0 : 0.2 }}
-                className="overflow-hidden text-[12px] leading-6 text-[#aa3e36]"
+                className="overflow-hidden text-[12px] leading-6 text-error"
               >
                 {error}
               </motion.p>
             )}
           </AnimatePresence>
         </div>
-        {localPackage ? (
-          <section
-            aria-labelledby="package-title"
-            className="installer-well mx-auto mt-5 max-w-125 rounded-lg p-4 text-left"
-          >
-            <h2 id="package-title" className="mb-3 text-[13px] font-medium text-ink">
-              Local package
-            </h2>
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="min-w-0 flex-1 basis-48 text-[13px] text-body" role="status">
-                <p className="break-all">{localPackage.filename}</p>
-                <p className="mt-1 text-[12px] text-muted">
-                  Version {localPackage.version} · Local package
-                </p>
-              </div>
-              <Button.Root
-                size="compact"
-                disabled={!!loading || choosingFirmware}
-                onClick={choosePackage}
-              >
-                <Button.Label>Change…</Button.Label>
-              </Button.Root>
-            </div>
-            <button
-              type="button"
-              className="mt-2 cursor-pointer rounded-sm py-1 text-[12px] text-muted underline-offset-4 outline-none hover:text-ink hover:underline focus-visible:ring-2 focus-visible:ring-focus/50 disabled:pointer-events-none disabled:opacity-50"
-              disabled={!!loading || choosingFirmware}
-              onClick={() => {
-                onSelectPackage(null);
-                setPackageError("");
-                appendSessionLog("Automatic package download selected.");
-              }}
-            >
-              Use automatic download
-            </button>
-          </section>
-        ) : (
-          <HelpDisclosure label="Use a local package">
-            <p>
-              A local package isn’t needed. The latest compatible RepriseOS package downloads
-              automatically when you continue. This option is intended for development and testing.
-            </p>
-            <Button.Root
-              className="mt-3"
-              size="compact"
-              disabled={!!loading || choosingFirmware}
-              onClick={choosePackage}
-            >
-              <Button.Label>Choose package…</Button.Label>
-            </Button.Root>
-          </HelpDisclosure>
-        )}
-        <div className="mx-auto max-w-125 text-left">
-          <div role="status" aria-atomic="true">
-            {loading && (
-              <p className="mt-4 flex items-center gap-2 text-[13px] text-body">
-                <CheckStatusIndicator status="checking" />
-                {loading === "choose"
-                  ? "Loading local package…"
-                  : localPackage
-                    ? "Preparing package…"
-                    : "Downloading and verifying RepriseOS…"}
-              </p>
-            )}
-          </div>
-          <div role="alert" className="mt-3 text-[12px] leading-6 text-[#aa3e36] empty:mt-0">
-            {packageError}
-          </div>
-        </div>
+        <LocalPackagePicker
+          localPackage={localPackage}
+          loading={loading}
+          disabled={!!loading || choosingFirmware}
+          packageError={packageError}
+          onChoose={choosePackage}
+          onAutomatic={() => {
+            onSelectPackage(null);
+            setPackageError("");
+            appendSessionLog("Automatic package download selected.");
+          }}
+        />
       </ScreenReveal>
       <ScreenReveal delay={0.16}>
         <InstallerScreen.Actions>

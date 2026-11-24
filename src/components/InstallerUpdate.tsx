@@ -86,7 +86,7 @@ export const InstallerUpdate: React.FC<Props> = ({
         </div>
       )}
       {error && (
-        <p role="alert" className="mt-2 break-words text-[12px] leading-5 text-[#aa3e36]">
+        <p role="alert" className="mt-2 break-words text-[12px] leading-5 text-error">
           {error}
         </p>
       )}

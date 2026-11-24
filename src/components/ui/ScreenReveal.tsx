@@ -26,4 +26,30 @@ const ScreenReveal: React.FC<IScreenRevealProps> = ({ children, delay = 0, class
   );
 };
 
-export { ScreenReveal };
+function ReadyReveal({
+  ready,
+  onReady,
+  children,
+}: {
+  ready: boolean;
+  onReady?: () => void;
+  children: React.ReactNode;
+}) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: ready ? 1 : 0 }}
+      transition={{ duration: reducedMotion ? 0 : 0.5 }}
+      inert={!ready}
+      aria-hidden={!ready}
+      onAnimationComplete={() => {
+        if (ready) onReady?.();
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+export { ReadyReveal, ScreenReveal };

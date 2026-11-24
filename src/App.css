@@ -6,6 +6,7 @@
   --color-ink: #302f2d;
   --color-body: #5b5955;
   --color-muted: #77736d;
+  --color-error: #aa3e36;
   --color-focus: #aa7435;
 }
 
@@ -44,6 +45,14 @@
 }
 
 @layer components {
+  .installer-panel {
+    @apply rounded-2xl border border-[#d4d1cb] bg-[#f8f7f4]/90 shadow-[inset_0_1px_0_#ffffff,0_2px_8px_#3a332b08];
+  }
+
+  .extension-chip {
+    @apply rounded-full border border-[#d7c39c] bg-[#f8efdf] px-2 text-[10.5px] text-[#7a5a24];
+  }
+
   .app-surface {
     background:
       radial-gradient(ellipse at 50% 38%, #ffffffb3 0%, #ffffff00 65%),

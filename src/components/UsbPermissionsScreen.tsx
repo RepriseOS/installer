@@ -83,7 +83,7 @@ export function UsbPermissionsScreen({ onContinue, onBack }: Props) {
               : "The installer will continue running as your normal user."}
       </p>
       {error && (
-        <p role="alert" className="mt-4 text-[13px] text-[#aa3e36]">
+        <p role="alert" className="mt-4 text-[13px] text-error">
           {error}
         </p>
       )}

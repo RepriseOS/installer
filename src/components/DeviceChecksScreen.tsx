@@ -128,7 +128,7 @@ const DeviceChecksScreen: React.FC<IDeviceChecksScreenProps> = ({
       )}
       {failure && (
         <div className="mx-auto mt-5 max-w-124 text-[13px] leading-6 text-body" role="alert">
-          <p className={failure.action === "retry" ? "break-words text-[#aa3e36]" : "break-words"}>
+          <p className={failure.action === "retry" ? "break-words text-error" : "break-words"}>
             {failure.message}
           </p>
         </div>

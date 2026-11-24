@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { chooseFirmware } from "../src/lib/installation.ts";
+import { chooseFirmware } from "../src/lib/firmware.ts";
 
 globalThis.window = { crypto: globalThis.crypto };
 globalThis.isTauri = true;

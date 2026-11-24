@@ -11,11 +11,12 @@ import { MainScreen } from "./components/MainScreen";
 import { SuccessScreen } from "./components/SuccessScreen";
 import { UsbPermissionsScreen } from "./components/UsbPermissionsScreen";
 import { DebugLog } from "./components/ui/DebugLog";
-import { backendAvailable, openExternalUrl } from "./lib/backend";
+import { ExternalLink } from "./components/ui/ExternalLink";
 import { startDeviceChecks } from "./lib/deviceChecks";
-import { type FirmwareInfo, startInstallation } from "./lib/installation";
+import type { FirmwareInfo } from "./lib/firmware";
+import { startInstallation } from "./lib/installation";
 import type { PackageInfo } from "./lib/package";
-import { appendSessionLog, getSessionLog, subscribeToSessionLog } from "./lib/sessionLog";
+import { appendSessionLog } from "./lib/sessionLog";
 import { getUpdateState, subscribeToUpdates, updateIsBusy } from "./lib/updates";
 import "./App.css";
 
@@ -57,7 +58,6 @@ const App: React.FC<AppProps> = ({ initial }) => {
     initial?.localPackage ?? null,
   );
   const [packageDigest, setPackageDigest] = React.useState(initial?.packageDigest ?? "");
-  const logs = React.useSyncExternalStore(subscribeToSessionLog, getSessionLog);
   const reducedMotion = useReducedMotion();
   const scrollRef = React.useRef<HTMLElement>(null);
 
@@ -175,25 +175,16 @@ const App: React.FC<AppProps> = ({ initial }) => {
           </motion.div>
         </AnimatePresence>
       </div>
-      <a
+      <ExternalLink
         href="https://ko-fi.com/lgreitis"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="absolute bottom-4 left-4 rounded text-xs text-muted underline-offset-4 hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-focus"
-        onClick={(event) => {
-          if (!backendAvailable()) return;
-          event.preventDefault();
-          void openExternalUrl(event.currentTarget.href).catch((error: unknown) => {
-            appendSessionLog(`Could not open Ko-fi: ${String(error)}`);
-          });
-        }}
+        className="absolute bottom-4 left-4 rounded text-xs text-muted no-underline hover:underline"
       >
         <span aria-hidden="true" className="text-red-500">
           ♥
         </span>{" "}
         Support on Ko-fi
-      </a>
-      {screen !== "extensions" && <DebugLog entries={logs} />}
+      </ExternalLink>
+      {screen !== "extensions" && <DebugLog />}
       {import.meta.env.DEV && !initial && screen === "main" && !updateIsBusy(updater.status) && (
         <a
           href="?dev-panel"

@@ -2,6 +2,7 @@ import { cva } from "class-variance-authority";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type React from "react";
 import { cn } from "../../lib/cn";
+import { Spinner } from "./Spinner";
 
 type CheckStatus = "pending" | "checking" | "passed" | "failed" | "skipped";
 
@@ -13,7 +14,7 @@ const checkItemVariants = cva(
         pending: "text-muted",
         checking: "bg-black/[0.025] text-ink",
         passed: "text-ink",
-        failed: "text-[#aa3e36]",
+        failed: "text-error",
         skipped: "text-muted",
       },
     },
@@ -51,30 +52,7 @@ export const CheckStatusIndicator: React.FC<ICheckStatusIndicatorProps> = ({ sta
           ) : status === "pending" ? (
             <span className="size-3 rounded-full border border-black/15" />
           ) : status === "checking" ? (
-            <motion.svg
-              width="16"
-              height="16"
-              viewBox="0 0 20 20"
-              fill="none"
-              aria-hidden="true"
-              animate={{ rotate: reducedMotion ? 0 : 360 }}
-              transition={{ duration: 0.8, ease: "linear", repeat: reducedMotion ? 0 : Infinity }}
-            >
-              <circle
-                cx="10"
-                cy="10"
-                r="7.5"
-                stroke="currentColor"
-                strokeOpacity="0.15"
-                strokeWidth="1.8"
-              />
-              <path
-                d="M10 2.5a7.5 7.5 0 0 1 7.5 7.5"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-              />
-            </motion.svg>
+            <Spinner />
           ) : (
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <circle cx="10" cy="10" r="9" fill="#609064" />
@@ -97,13 +75,7 @@ interface ICheckListRootProps extends React.ComponentProps<"ul"> {}
 
 const CheckListRoot: React.FC<ICheckListRootProps> = ({ className, ...props }) => {
   return (
-    <ul
-      className={cn(
-        "mx-auto space-y-1 rounded-2xl border border-[#d4d1cb] bg-[#f8f7f4]/90 p-4 shadow-[inset_0_1px_0_#ffffff,0_2px_8px_#3a332b08] sm:p-5",
-        className,
-      )}
-      {...props}
-    />
+    <ul className={cn("mx-auto space-y-1 installer-panel p-4 sm:p-5", className)} {...props} />
   );
 };
 

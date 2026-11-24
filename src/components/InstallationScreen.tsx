@@ -143,7 +143,7 @@ const InstallationScreen: React.FC<IInstallationScreenProps> = ({
                     the screen turns black again.
                   </p>
                   {retry.error && (
-                    <p role="alert" className="mt-4 text-[#aa3e36]">
+                    <p role="alert" className="mt-4 text-error">
                       {retry.error}
                     </p>
                   )}
@@ -190,7 +190,7 @@ const InstallationScreen: React.FC<IInstallationScreenProps> = ({
         </p>
       )}
       {debugError && (
-        <p role="alert" className="mt-3 text-[12px] text-[#aa3e36]">
+        <p role="alert" className="mt-3 text-[12px] text-error">
           {debugError}
         </p>
       )}

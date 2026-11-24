@@ -6,6 +6,7 @@ import type { DeviceInfo } from "../lib/deviceChecks";
 import { Button } from "./ui/Button";
 import { InstallerScreen } from "./ui/InstallerScreen";
 import { IpodIllustration } from "./ui/IpodIllustration";
+import { ReadyReveal } from "./ui/ScreenReveal";
 
 interface IDfuScreenProps {
   onContinue: (device: DeviceInfo) => void;
@@ -76,16 +77,7 @@ const DfuScreen: React.FC<IDfuScreenProps> = ({ onContinue }) => {
       >
         <IpodIllustration showHighlights={ready} onLoad={() => setImageLoaded(true)} />
       </motion.div>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: ready ? 1 : 0 }}
-        transition={{ duration: reducedMotion ? 0 : 0.5 }}
-        inert={!ready}
-        aria-hidden={!ready}
-        onAnimationComplete={() => {
-          if (ready) focusHeading();
-        }}
-      >
+      <ReadyReveal ready={ready} onReady={focusHeading}>
         <InstallerScreen.Title id="dfu-title" ref={headingRef} tabIndex={-1}>
           Put your iPod in DFU mode.
         </InstallerScreen.Title>
@@ -118,7 +110,7 @@ const DfuScreen: React.FC<IDfuScreenProps> = ({ onContinue }) => {
             <Button.Label>Continue</Button.Label>
           </Button.Root>
         </InstallerScreen.Actions>
-      </motion.div>
+      </ReadyReveal>
     </InstallerScreen.Root>
   );
 };
