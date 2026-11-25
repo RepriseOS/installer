@@ -1,6 +1,6 @@
 [package]
 name = "repriseos-installer"
-version = "0.3.0"
+version = "0.3.1"
 license = "GPL-3.0-only"
 description = "RepriseOS installer for iPod Classic"
 edition = "2021"
@@ -14,8 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-reprise-bundle = { git = "https://github.com/RepriseOS/repriseos.git", rev = "0575ef9abc62d7a0bb081279ea8551033b3969ae" }
-reprise-device = { git = "https://github.com/RepriseOS/repriseos.git", rev = "0575ef9abc62d7a0bb081279ea8551033b3969ae" }
+reprise-bundle = { git = "https://github.com/RepriseOS/repriseos.git", rev = "53985e28452f9948533aae7ac9fc101a205bea71" }
+reprise-device = { git = "https://github.com/RepriseOS/repriseos.git", rev = "53985e28452f9948533aae7ac9fc101a205bea71" }
 # Build reprise-device's libusb dependency for each target architecture.
 rusb = { version = "0.9.4", features = ["vendored"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
