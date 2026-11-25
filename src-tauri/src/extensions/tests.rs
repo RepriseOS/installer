@@ -102,6 +102,32 @@ fn mounted_install_update_and_remove() {
 }
 
 #[test]
+fn optional_libraries_need_not_be_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join("iPod_Control/Device")).unwrap();
+    fs::write(root.join("osos-cfw.bin"), image("Development")).unwrap();
+    fs::write(root.join("cfw-loader.bin"), vec![0; 0x25220]).unwrap();
+    let mount = inspect(root).unwrap().unwrap();
+    let optional = |count| {
+        let mut ext = request("night-shift", "1.0.0", 81, Some("reprise"));
+        ext.data[28 + 54] = count;
+        let hash = ext.data[28..].iter().fold(2166136261u32, |h, b| {
+            (h ^ u32::from(*b)).wrapping_mul(16777619)
+        });
+        ext.data[24..28].copy_from_slice(&hash.to_le_bytes());
+        ext.sha256 = format!("{:x}", Sha256::digest(&ext.data));
+        ext
+    };
+    let ext = optional(1);
+    assert!(parse(&ext.data).unwrap().requires.is_empty());
+    write(&mount, ext).unwrap();
+    assert_eq!(inventory(root).unwrap()[0].id, "night-shift");
+    // More optional libraries than listed ones.
+    assert!(parse(&optional(2).data).is_err());
+}
+
+#[test]
 fn unknown_development_can_install_and_old_release_cannot() {
     let dev = firmware::identify(b"RepriseOS Development\0", "iPod".into()).unwrap();
     let ext = parse(&request("sample", "1.0.0", 81, None).data).unwrap();
