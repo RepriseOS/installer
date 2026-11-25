@@ -10,6 +10,9 @@ export interface InstalledExtension {
   folder: ExtensionFolder;
   requires: string[];
   library: boolean;
+  /** The API and firmware the package needs, as in its catalog entry. */
+  api: string;
+  firmware_id: string;
 }
 
 export interface DeviceSnapshot {

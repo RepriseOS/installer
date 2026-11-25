@@ -14,8 +14,10 @@ import {
   checkExtensionMounts,
   configureExtensions,
   ejectAndReboot,
+  entryStatus,
   getExtensionsState,
   installExtension,
+  installedCompatibility,
   installedVersion,
   loadExtensions,
   refreshCatalog,
@@ -101,9 +103,9 @@ test("an open catalog picks up new screenshots and keeps them if the next refres
   assert.equal(getExtensionsState().catalog, catalog);
 });
 
-function simulatedDevice() {
+function simulatedDevice(copies = []) {
   const installed = new Map();
-  function store(id, version, folder) {
+  function store(id, version, folder, api) {
     const entry = document.extensions.find((item) => item.id === id);
     installed.set(folder + id, {
       id,
@@ -112,10 +114,13 @@ function simulatedDevice() {
       name: entry.name,
       requires: entry.requires,
       library: entry.category === "library",
+      api: api ?? entry.api,
+      firmware_id: entry.firmware_id,
     });
   }
   store("balance", "0.1.0", "/Reprise/Extensions/");
   store("night-shift", "0.0.9", "/Revola/Extensions/");
+  for (const copy of copies) store(...copy);
   return {
     async read() {
       return {
@@ -159,6 +164,95 @@ test("compatibility follows firmware, API, RepriseOS version and models", () => 
   assert.equal(
     checkCompatibility({ ...byId.balance, models: ["iPod classic 6G"] }, device).warning,
     "Not tested on iPod classic 7G",
+  );
+});
+
+test("a known release names the RepriseOS to install instead of the API", () => {
+  const future = parseCatalog(document, base).find((item) => item.id === "future");
+  assert.equal(checkCompatibility(future, device).reason, "Needs a newer RepriseOS (API 1.90)");
+  assert.equal(
+    checkCompatibility({ ...future, min_repriseos: "0.6.0" }, device).reason,
+    "Needs RepriseOS 0.6.0",
+  );
+  assert.equal(
+    checkCompatibility({ ...future, min_repriseos: "0.4.0" }, device).reason,
+    "Needs a newer RepriseOS (API 1.90)",
+  );
+});
+
+test("installed copies are judged by their own API and the loader's choice", async () => {
+  configureExtensions({
+    fetch: fakeFetch(),
+    device: simulatedDevice([
+      ["night-shift", "0.2.0", "/Reprise/Extensions/", "1.90"],
+      ["crossfeed", "0.2.0", "/Reprise/Extensions/", "1.90"],
+    ]),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  // The too-new /Reprise copy is skipped, so the /Revola copy runs and can update.
+  assert.equal(installedVersion("night-shift"), "0.0.9");
+  assert.deepEqual(installedCompatibility("night-shift"), { compatible: true });
+  assert.deepEqual(
+    availableUpdates().map((item) => item.id),
+    ["night-shift"],
+  );
+  // The only crossfeed copy is too new: newer than the catalog, but not loaded.
+  assert.equal(installedVersion("crossfeed"), "0.2.0");
+  assert.equal(installedCompatibility("crossfeed").reason, "Needs a newer RepriseOS (API 1.90)");
+  assert.equal(installedCompatibility("dsp"), null);
+  const crossfeed = getExtensionsState().catalog.entries.find((item) => item.id === "crossfeed");
+  assert.equal(entryStatus(crossfeed).canReplace, true);
+});
+
+test("a copy whose required library the firmware skips does not load either", async () => {
+  configureExtensions({
+    fetch: fakeFetch(),
+    device: simulatedDevice([
+      ["dsp", "0.2.0", "/Reprise/Extensions/", "1.90"],
+      ["crossfeed", "0.1.0", "/Reprise/Extensions/"],
+    ]),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  assert.equal(installedCompatibility("crossfeed").reason, "Missing required library Dsp");
+  const crossfeed = getExtensionsState().catalog.entries.find((item) => item.id === "crossfeed");
+  assert.equal(entryStatus(crossfeed).canReplace, true);
+});
+
+test("a library copy the firmware skips is reinstalled with its dependent", async () => {
+  configureExtensions({
+    fetch: fakeFetch(),
+    device: simulatedDevice([["dsp", "0.2.0", "/Reprise/Extensions/", "1.90"]]),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  await installExtension("crossfeed");
+  assert.deepEqual(
+    getExtensionsState().operations.crossfeed.steps.map((step) => step.label),
+    [
+      "Check compatibility",
+      "Download and verify Dsp 0.1.0",
+      "Download and verify Crossfeed 0.1.0",
+      "Copy to /Reprise/Extensions/",
+    ],
+  );
+  assert.deepEqual(installedCompatibility("dsp"), { compatible: true });
+});
+
+test("an update the iPod cannot load leaves the installed copy compatible", async () => {
+  configureExtensions({
+    fetch: fakeFetch(),
+    device: simulatedDevice([["future", "0.0.1", "/Reprise/Extensions/", "1.78"]]),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  assert.deepEqual(installedCompatibility("future"), { compatible: true });
+  const future = getExtensionsState().catalog.entries.find((item) => item.id === "future");
+  assert.equal(entryStatus(future).canReplace, false);
+  assert.equal(
+    availableUpdates().some((item) => item.id === "future"),
+    false,
   );
 });
 

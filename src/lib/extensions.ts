@@ -122,10 +122,44 @@ export async function refreshCatalog(signal?: AbortSignal) {
   }
 }
 
+function loads(copy: InstalledExtension, current = state) {
+  const info = current.device.info;
+  return !info || checkCompatibility(copy, info).compatible;
+}
+
 /** The loader uses the first valid copy in path order, with /Reprise first. */
 function activeCopy(id: string, current = state) {
-  const copies = current.device.installed.filter((item) => item.id === id);
-  return copies.find((item) => item.folder === extensionFolder) ?? copies[0];
+  const copies = current.device.installed
+    .filter((item) => item.id === id)
+    .sort((a, b) => Number(b.folder === extensionFolder) - Number(a.folder === extensionFolder));
+  return copies.find((item) => loads(item, current)) ?? copies[0];
+}
+
+/** Whether the firmware on the iPod loads the copy of `id` it picks and its required libraries. */
+export function installedCompatibility(
+  id: string,
+  current = state,
+  seen = new Set<string>(),
+): Compatibility | null {
+  const copy = activeCopy(id, current);
+  const info = current.device.info;
+  if (!copy || !info) return null;
+  const result = checkCompatibility(copy, info);
+  seen.add(id);
+  for (const library of result.compatible ? copy.requires : []) {
+    if (seen.has(library)) continue;
+    const loaded =
+      activeCopy(library, current)?.library &&
+      installedCompatibility(library, current, seen)?.compatible;
+    if (loaded) continue;
+    const name = activeCopy(library, current)?.name ?? library;
+    return {
+      compatible: false,
+      summary: "Missing library",
+      reason: `Missing required library ${name}`,
+    };
+  }
+  return result;
 }
 
 export function installedVersion(id: string, current = state) {
@@ -135,15 +169,24 @@ export function installedVersion(id: string, current = state) {
 export interface EntryStatus {
   installed?: string;
   updateAvailable: boolean;
+  /** The catalog version on this iPod. */
   compatibility: Compatibility | null;
+  /** The installed copy, judged by its own manifest. */
+  installedCompatibility: Compatibility | null;
+  /** The catalog version can replace an installed copy the firmware does not load. */
+  canReplace: boolean;
 }
 export function entryStatus(entry: CatalogEntry, current = state): EntryStatus {
   const installed = installedVersion(entry.id, current);
   const info = current.device.info;
+  const compatibility = info ? checkCompatibility(entry, info) : null;
+  const copy = installed ? installedCompatibility(entry.id, current) : null;
   return {
     installed,
     updateAvailable: !!installed && compareVersions(entry.version, installed) > 0,
-    compatibility: info ? checkCompatibility(entry, info) : null,
+    compatibility,
+    installedCompatibility: copy,
+    canReplace: copy?.compatible === false && compatibility?.compatible !== false,
   };
 }
 
@@ -217,6 +260,7 @@ export async function installExtension(id: string) {
         entry.id === id ||
         !installedVersion(entry.id) ||
         activeCopy(entry.id)?.library === false ||
+        installedCompatibility(entry.id)?.compatible === false ||
         compareVersions(entry.version, installedVersion(entry.id) ?? "0") > 0,
     );
   } catch (error) {
