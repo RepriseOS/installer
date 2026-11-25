@@ -81,16 +81,26 @@ fn mounted_install_update_and_remove() {
     let dir = folder(root, PRIMARY, false).unwrap().unwrap();
     fs::rename(dir.join("crossfeed.rvx"), dir.join("custom-name.rvx")).unwrap();
     write(&mount, request("crossfeed", "1.1.0", 81, Some("dsp"))).unwrap();
+    let installed = inventory(root).unwrap();
+    let crossfeed = installed.iter().find(|i| i.id == "crossfeed").unwrap();
+    assert_eq!(crossfeed.version, "1.1.0");
     assert_eq!(
-        inventory(root)
-            .unwrap()
-            .iter()
-            .find(|i| i.id == "crossfeed")
-            .unwrap()
-            .version,
-        "1.1.0"
+        (crossfeed.api.as_str(), crossfeed.firmware_id.as_str()),
+        ("1.81", "660eb6ff")
     );
     assert!(write(&mount, request("crossfeed", "1.2.0", 82, Some("dsp"))).is_err());
+    // A copy placed without the installer still reports the API it needs.
+    fs::write(
+        dir.join("newer.rvx"),
+        request("newer", "1.0.0", 84, None).data,
+    )
+    .unwrap();
+    let installed = inventory(root).unwrap();
+    assert_eq!(
+        installed.iter().find(|i| i.id == "newer").unwrap().api,
+        "1.84"
+    );
+    fs::remove_file(dir.join("newer.rvx")).unwrap();
     remove(&mount, "crossfeed", PRIMARY).unwrap();
     remove(&mount, "dsp", PRIMARY).unwrap();
     assert!(inventory(root).unwrap().is_empty());

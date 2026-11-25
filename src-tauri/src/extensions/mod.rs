@@ -15,6 +15,11 @@ fn word(data: &[u8], i: usize) -> Option<u32> {
     Some(u32::from_le_bytes(data.get(i..i + 4)?.try_into().ok()?))
 }
 
+/// The catalog's "major.minor" form of an RVX API word.
+fn api_text(api: u32) -> String {
+    format!("{}.{}", api >> 16, api & 0xffff)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
@@ -61,6 +66,9 @@ pub struct Installed {
     #[serde(skip)]
     path: PathBuf,
     library: bool,
+    /// The package's minimum API and target firmware, in catalog form.
+    api: String,
+    firmware_id: String,
 }
 
 #[derive(Serialize)]

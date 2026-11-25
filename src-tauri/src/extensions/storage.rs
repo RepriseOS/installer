@@ -120,6 +120,8 @@ pub(super) fn inventory(root: &Path) -> Result<Vec<Installed>> {
                     version: pkg.version,
                     requires: pkg.requires,
                     library: pkg.library,
+                    api: super::api_text(pkg.minimum),
+                    firmware_id: format!("{:08x}", pkg.target),
                     folder: which.into(),
                     path,
                 });
