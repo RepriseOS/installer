@@ -36,13 +36,15 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Package> {
     let minimum = word(m, 8).unwrap();
     let modules = word(m, 16).unwrap() as usize;
     let sites = word(m, 20).unwrap() as usize;
-    let deps = word(m, 52).unwrap();
+    // Listed libraries, then how many of them are optional; those come last.
+    let (listed, optional) = (short(52), short(54));
     if word(m, 0) != Some(0x464d5652)
         || word(m, 4) != Some(4)
         || !(1..=15).contains(&modules)
         || modules > entries
         || sites > 8
-        || deps > 4
+        || listed > 4
+        || optional > listed
         || minimum >> 16 != w(8)? >> 16
         || minimum > w(8)?
     {
@@ -63,7 +65,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Package> {
     }
     let mut requires = Vec::new();
     let mut offset = short(44);
-    for _ in 0..deps {
+    for _ in 0..listed {
         let dep = string(offset)?;
         if !valid_id(dep) {
             return Err(bad.into());
@@ -71,6 +73,8 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Package> {
         offset += dep.len() + 1;
         requires.push(dep.to_owned());
     }
+    // The firmware starts a package without its optional libraries.
+    requires.truncate(listed - optional);
     let hash = bytes[28..].iter().fold(2166136261u32, |h, b| {
         (h ^ u32::from(*b)).wrapping_mul(16777619)
     });
