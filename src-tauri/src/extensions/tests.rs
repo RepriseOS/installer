@@ -8,14 +8,23 @@ use sha2::{Digest, Sha256};
 use std::fs;
 
 fn image(version: &str) -> Vec<u8> {
+    core(version, 0x10051)
+}
+
+fn core(version: &str, api: u32) -> Vec<u8> {
     let mut bytes =
         format!("\0Build: abc12345-dirty\0RepriseOS {version}\0RepriseRVX1\0").into_bytes();
-    bytes.extend(0x10051u32.to_le_bytes());
+    bytes.extend(api.to_le_bytes());
     bytes.extend(0x660eb6ffu32.to_le_bytes());
     bytes
 }
 
 fn request(id: &str, version: &str, minor: u32, dependency: Option<&str>) -> WritePackage {
+    packed(id, version, minor, 0x10060, dependency)
+}
+
+/// A package whose manifest asks for API 1.`minor`, packed by SDK `sdk`.
+fn packed(id: &str, version: &str, minor: u32, sdk: u32, dependency: Option<&str>) -> WritePackage {
     let mut manifest = vec![0; 64];
     let mut strings = Vec::new();
     for (index, value) in [id, id, "extension", version, "author", "MIT", ""]
@@ -47,7 +56,7 @@ fn request(id: &str, version: &str, minor: u32, dependency: Option<&str>) -> Wri
     let hash = manifest.iter().fold(2166136261u32, |h, b| {
         (h ^ u32::from(*b)).wrapping_mul(16777619)
     });
-    let mut data: Vec<_> = [0x30585652u32, 1, 0x10060, 0x660eb6ff, len, 1, hash]
+    let mut data: Vec<_> = [0x30585652u32, 1, sdk, 0x660eb6ff, len, 1, hash]
         .into_iter()
         .flat_map(u32::to_le_bytes)
         .collect();
@@ -85,8 +94,12 @@ fn mounted_install_update_and_remove() {
     let crossfeed = installed.iter().find(|i| i.id == "crossfeed").unwrap();
     assert_eq!(crossfeed.version, "1.1.0");
     assert_eq!(
-        (crossfeed.api.as_str(), crossfeed.firmware_id.as_str()),
-        ("1.81", "660eb6ff")
+        (
+            crossfeed.api.as_str(),
+            crossfeed.firmware_id.as_str(),
+            crossfeed.sdk.as_str()
+        ),
+        ("1.81", "660eb6ff", "1.96")
     );
     assert!(write(&mount, request("crossfeed", "1.2.0", 82, Some("dsp"))).is_err());
     // A copy placed without the installer still reports the API it needs.
@@ -124,6 +137,34 @@ fn unknown_development_can_install_and_old_release_cannot() {
     assert!(firmware::identify(&image("0.3.3"), "iPod".into())
         .unwrap()
         .allows(&ext));
+}
+
+#[test]
+fn layout_floor_refuses_packages_from_older_sdks() {
+    let old = parse(&packed("sample", "1.0.0", 82, 0x10055, None).data).unwrap();
+    let rebuilt = parse(&packed("sample", "1.0.1", 82, 0x10056, None).data).unwrap();
+    let before = firmware::identify(&core("0.4.0", 0x10052), "iPod".into()).unwrap();
+    assert_eq!(before.sdk_floor, None);
+    assert!(before.allows(&old) && before.allows(&rebuilt));
+    for (version, api) in [
+        ("0.5.0", 0x10056),
+        ("0.5.0", 0x10057),
+        ("Development", 0x10056),
+    ] {
+        let device = firmware::identify(&core(version, api), "iPod".into()).unwrap();
+        assert_eq!(device.sdk_floor.as_deref(), Some("1.86"));
+        assert!(!device.allows(&old));
+        assert!(device.allows(&rebuilt));
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join("iPod_Control/Device")).unwrap();
+    fs::write(root.join("osos-cfw.bin"), core("0.5.0", 0x10056)).unwrap();
+    fs::write(root.join("cfw-loader.bin"), vec![0; 0x25220]).unwrap();
+    let mount = inspect(root).unwrap().unwrap();
+    assert!(write(&mount, packed("sample", "1.0.0", 82, 0x10055, None)).is_err());
+    write(&mount, packed("sample", "1.0.1", 82, 0x10056, None)).unwrap();
+    assert_eq!(inventory(root).unwrap()[0].sdk, "1.86");
 }
 
 #[test]

@@ -13,6 +13,8 @@ export interface InstalledExtension {
   /** The API and firmware the package needs, as in its catalog entry. */
   api: string;
   firmware_id: string;
+  /** The SDK that packed it. */
+  sdk: string;
 }
 
 export interface DeviceSnapshot {

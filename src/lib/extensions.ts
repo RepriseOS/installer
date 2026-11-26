@@ -171,7 +171,7 @@ export interface EntryStatus {
   updateAvailable: boolean;
   /** The catalog version on this iPod. */
   compatibility: Compatibility | null;
-  /** The installed copy, judged by its own manifest. */
+  /** The installed copy, judged by its own package. */
   installedCompatibility: Compatibility | null;
   /** The catalog version can replace an installed copy the firmware does not load. */
   canReplace: boolean;

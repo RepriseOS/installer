@@ -20,6 +20,15 @@ fn api_text(api: u32) -> String {
     format!("{}.{}", api >> 16, api & 0xffff)
 }
 
+/// rv_row and rv_menu_entry grew in API 1.86, so a core at that API or later
+/// only loads packages an SDK at 1.86 or later packed.
+const LAYOUT_API: u32 = 0x10056;
+
+/// The lowest header SDK a core at `api` loads, when it refuses older ones.
+fn sdk_floor(api: u32) -> Option<u32> {
+    (api >= LAYOUT_API && api >> 16 == LAYOUT_API >> 16).then_some(LAYOUT_API)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
@@ -29,6 +38,8 @@ pub struct DeviceInfo {
     revision: Option<String>,
     api: Option<String>,
     firmware_id: Option<String>,
+    /// The lowest SDK the firmware loads packages from, when it refuses older ones.
+    sdk_floor: Option<String>,
 }
 
 impl DeviceInfo {
@@ -45,10 +56,12 @@ impl DeviceInfo {
                 let Some((major, minor)) = api.split_once('.') else {
                     return false;
                 };
-                major.parse::<u32>() == Ok(pkg.minimum >> 16)
-                    && minor
-                        .parse::<u32>()
-                        .is_ok_and(|v| v >= (pkg.minimum & 0xffff))
+                let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+                    return false;
+                };
+                major == pkg.minimum >> 16
+                    && minor >= (pkg.minimum & 0xffff)
+                    && sdk_floor(major << 16 | minor).is_none_or(|floor| pkg.sdk >= floor)
                     && u32::from_str_radix(target, 16) == Ok(pkg.target)
             }
             _ => dev,
@@ -69,6 +82,8 @@ pub struct Installed {
     /// The package's minimum API and target firmware, in catalog form.
     api: String,
     firmware_id: String,
+    /// The SDK that packed it, in catalog form.
+    sdk: String,
 }
 
 #[derive(Serialize)]

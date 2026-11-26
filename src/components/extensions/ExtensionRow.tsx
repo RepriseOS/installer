@@ -33,7 +33,7 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
   const deviceReady = state.device.status === "ready";
   const legacy = copies?.some((copy) => copy.folder === "/Revola/Extensions/");
 
-  // An installed copy is judged by its own manifest, the catalog version only for installing.
+  // An installed copy is judged by its own package, the catalog version only for installing.
   const problem = status
     ? status.installed
       ? status.installedCompatibility

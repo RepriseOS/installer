@@ -53,6 +53,8 @@ export interface DeviceInfo {
   repriseos: string;
   api: string | null;
   firmwareId: string | null;
+  /** The lowest SDK the firmware loads packages from, when it refuses older ones. */
+  sdkFloor?: string | null;
   revision?: string | null;
   token?: string;
   ejectReboot?: boolean;
@@ -113,7 +115,7 @@ export type Compatibility =
 
 /** Mirrors the firmware's package checks plus the listing's optional requirements. */
 export function checkCompatibility(
-  entry: Pick<CatalogEntry, "api" | "firmware_id" | "min_repriseos" | "models">,
+  entry: Pick<CatalogEntry, "api" | "firmware_id" | "min_repriseos" | "models"> & { sdk?: string },
   device: DeviceInfo,
 ): Compatibility {
   const development = device.repriseos === "Development";
@@ -154,6 +156,14 @@ export function checkCompatibility(
       reason: newerRelease
         ? `Needs RepriseOS ${entry.min_repriseos}`
         : `Needs a newer RepriseOS (API ${entry.api})`,
+    };
+  }
+  // A catalog entry has no SDK field; the SDK that packed it is at least its api.
+  if (device.sdkFloor && compareVersions(entry.sdk ?? entry.api, device.sdkFloor) < 0) {
+    return {
+      compatible: false,
+      summary: "Older build",
+      reason: "Built for an older RepriseOS",
     };
   }
   if (newerRelease) {

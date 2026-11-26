@@ -103,9 +103,9 @@ test("an open catalog picks up new screenshots and keeps them if the next refres
   assert.equal(getExtensionsState().catalog, catalog);
 });
 
-function simulatedDevice(copies = []) {
+function simulatedDevice(copies = [], info = device) {
   const installed = new Map();
-  function store(id, version, folder, api) {
+  function store(id, version, folder, api, sdk) {
     const entry = document.extensions.find((item) => item.id === id);
     installed.set(folder + id, {
       id,
@@ -116,6 +116,7 @@ function simulatedDevice(copies = []) {
       library: entry.category === "library",
       api: api ?? entry.api,
       firmware_id: entry.firmware_id,
+      sdk: sdk ?? api ?? entry.api,
     });
   }
   store("balance", "0.1.0", "/Reprise/Extensions/");
@@ -125,7 +126,7 @@ function simulatedDevice(copies = []) {
     async read() {
       return {
         mounts: "first",
-        snapshot: { device: { ...device, token: "first" }, installed: [...installed.values()] },
+        snapshot: { device: { ...info, token: "first" }, installed: [...installed.values()] },
       };
     },
     async write({ id, version }) {
@@ -254,6 +255,66 @@ test("an update the iPod cannot load leaves the installed copy compatible", asyn
     availableUpdates().some((item) => item.id === "future"),
     false,
   );
+});
+
+test("a firmware with an SDK floor refuses older builds and offers rebuilt releases", async () => {
+  const floor = { ...device, repriseos: "0.5.0", api: "1.86", sdkFloor: "1.86" };
+  const rebuilt = {
+    ...document,
+    extensions: document.extensions.map((item) =>
+      item.id === "night-shift" ? { ...item, version: "0.1.3", api: "1.86" } : item,
+    ),
+  };
+  configureExtensions({
+    fetch: async (url) =>
+      url === base ? Response.json(rebuilt) : new Response("missing", { status: 404 }),
+    device: simulatedDevice(
+      [
+        ["night-shift", "0.1.2", "/Reprise/Extensions/", "1.84", "1.84"],
+        ["crossfeed", "0.1.1", "/Reprise/Extensions/", "1.84", "1.86"],
+        ["dsp", "0.1.0", "/Reprise/Extensions/", "1.74", "1.85"],
+      ],
+      floor,
+    ),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  // The copy of Night Shift predates the floor; the catalog's rebuilt release loads.
+  assert.equal(installedCompatibility("night-shift").reason, "Built for an older RepriseOS");
+  const entries = getExtensionsState().catalog.entries;
+  const nightShift = entries.find((item) => item.id === "night-shift");
+  assert.deepEqual(entryStatus(nightShift).compatibility, { compatible: true });
+  assert.equal(entryStatus(nightShift).canReplace, true);
+  // A library packed before the floor fails its user; the catalog's build is as old.
+  assert.equal(installedCompatibility("dsp").summary, "Older build");
+  assert.equal(installedCompatibility("crossfeed").reason, "Missing required library Dsp");
+  const dsp = entries.find((item) => item.id === "dsp");
+  assert.equal(entryStatus(dsp).compatibility.summary, "Older build");
+  assert.equal(entryStatus(dsp).canReplace, false);
+  // Catalog builds that predate the floor are neither installable nor updates.
+  assert.deepEqual(
+    availableUpdates().map((item) => item.id),
+    ["night-shift"],
+  );
+  assert.equal(
+    entryStatus(entries.find((item) => item.id === "balance")).compatibility.summary,
+    "Older build",
+  );
+  // An entry above the device's API still asks for a newer RepriseOS.
+  assert.equal(
+    entryStatus(entries.find((item) => item.id === "future")).compatibility.summary,
+    "Needs newer RepriseOS",
+  );
+});
+
+test("a firmware without an SDK floor loads every build of its major", async () => {
+  configureExtensions({
+    fetch: fakeFetch(),
+    device: simulatedDevice([["night-shift", "0.1.2", "/Reprise/Extensions/", "1.81", "1.81"]]),
+    catalogUrl: base,
+  });
+  await loadExtensions();
+  assert.deepEqual(installedCompatibility("night-shift"), { compatible: true });
 });
 
 test("development bypasses the OS release gate but respects known RVX requirements", () => {
