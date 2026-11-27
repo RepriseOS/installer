@@ -6,6 +6,7 @@ import { InstallerScreen } from "./ui/InstallerScreen";
 interface IMainScreenProps {
   onInstall: () => void;
   onManageExtensions: () => void;
+  onAbout: () => void;
   installDisabled?: boolean;
   updates: React.ReactNode;
 }
@@ -13,6 +14,7 @@ interface IMainScreenProps {
 const MainScreen: React.FC<IMainScreenProps> = ({
   onInstall,
   onManageExtensions,
+  onAbout,
   installDisabled,
   updates,
 }) => {
@@ -37,6 +39,13 @@ const MainScreen: React.FC<IMainScreenProps> = ({
           disabled={installDisabled}
         />
       </InstallerScreen.Actions>
+      <button
+        type="button"
+        onClick={onAbout}
+        className="mx-auto mt-3 block cursor-pointer rounded-sm text-[12px] text-muted underline-offset-4 hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-focus"
+      >
+        About
+      </button>
       {updates}
     </InstallerScreen.Root>
   );

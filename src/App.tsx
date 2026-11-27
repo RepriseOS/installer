@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import React from "react";
+import { AboutScreen } from "./components/AboutScreen";
 import { DeviceChecksScreen } from "./components/DeviceChecksScreen";
 import { DfuScreen } from "./components/DfuScreen";
 import { DisclaimerScreen } from "./components/DisclaimerScreen";
@@ -29,7 +30,8 @@ export type Screen =
   | "checks"
   | "installation"
   | "success"
-  | "extensions";
+  | "extensions"
+  | "about";
 
 interface AppProps {
   initial?: {
@@ -96,6 +98,7 @@ const App: React.FC<AppProps> = ({ initial }) => {
                   appendSessionLog("Extension management opened.");
                   setScreen("extensions");
                 }}
+                onAbout={() => setScreen("about")}
                 onInstall={() => {
                   appendSessionLog("New setup started.");
                   setFirmware(null);
@@ -169,6 +172,8 @@ const App: React.FC<AppProps> = ({ initial }) => {
               />
             ) : screen === "extensions" ? (
               <ExtensionsScreen onBack={() => setScreen("main")} />
+            ) : screen === "about" ? (
+              <AboutScreen onBack={() => setScreen("main")} />
             ) : (
               <SuccessScreen onDone={() => setScreen("main")} />
             )}

@@ -1,0 +1,36 @@
+name: Licences
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  licences:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-deny@0.20.2,cargo-about@0.8.4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: '11.22.0'
+      - name: Install production frontend dependencies
+        run: pnpm install --frozen-lockfile --prod
+      - name: Check dependency licences
+        run: cargo deny --manifest-path src-tauri/Cargo.toml --locked check licenses
+      - name: Check THIRD-PARTY-LICENSES
+        run: python3 scripts/third_party.py --check

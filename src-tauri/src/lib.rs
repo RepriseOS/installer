@@ -1,3 +1,4 @@
+mod about;
 mod device;
 mod extensions;
 mod firmware;
@@ -35,6 +36,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            about::about,
             usb_permissions::usb_permissions_ready,
             usb_permissions::enable_usb_access,
             device::discover_devices,

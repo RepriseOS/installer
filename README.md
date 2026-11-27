@@ -43,6 +43,13 @@ pnpm check
 cargo test --manifest-path src-tauri/Cargo.toml -j 8
 ```
 
+The About screen shows `COPYING` and `src-tauri/THIRD-PARTY-LICENSES`, which lists the licence of every third-party Rust crate and npm package the app ships, plus libusb and the Windows WebView2 loader. Regenerate it after changing dependencies. CI fails when it is stale or when `src-tauri/deny.toml` rejects a licence:
+
+```sh
+python3 scripts/third_party.py   # needs cargo-about 0.8.4 and pnpm install
+cargo deny --manifest-path src-tauri/Cargo.toml --locked check licenses
+```
+
 ## Support
 
 ♥ [Support on Ko-fi](https://ko-fi.com/lgreitis). Help fund my questionable iPod purchases.
