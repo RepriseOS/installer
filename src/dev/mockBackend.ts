@@ -123,6 +123,12 @@ export function createMockBackend(
         };
       case "install_installer_update":
         return simulateUpdate(scenario, channel(args), wait);
+      case "about":
+        return {
+          version: "0.0.0-dev",
+          license: "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007",
+          third_party: "Third-party software in the RepriseOS Installer desktop app.",
+        };
       case "plugin:opener|open_url":
       case "open_installer_download":
         return;
