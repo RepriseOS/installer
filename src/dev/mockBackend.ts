@@ -2,7 +2,7 @@ import type { Backend, EventChannel } from "../lib/backend.ts";
 import { simulateChecks, type Wait } from "./checks.ts";
 import { mockDevice, mockFirmware, mockPackage } from "./fixtures.ts";
 import { simulateInstallation, simulateUpdate } from "./progress.ts";
-import type { Scenario } from "./scenarios.ts";
+import type { InstalledCopy, Scenario } from "./scenarios.ts";
 
 function channel<T>(args: Record<string, unknown>, name = "onEvent"): EventChannel<T> {
   const value = args[name] as EventChannel<T> | undefined;
@@ -22,6 +22,10 @@ export function createMockBackend(
   let usbAttempts = 0;
   // Discovery polls that still miss the iPod while it is put back in DFU.
   let awayPolls = 0;
+  const copies = new Map((scenario.extensions?.installed ?? []).map((copy) => [copy.id, copy]));
+  let ejected = false;
+  const apiText = (bytes: number[], at: number) =>
+    `${bytes[at + 2] | (bytes[at + 3] << 8)}.${bytes[at] | (bytes[at + 1] << 8)}`;
   const away = <T>(operation: Promise<T>) =>
     operation.catch((error: unknown) => {
       awayPolls = 4;
@@ -123,6 +127,60 @@ export function createMockBackend(
         };
       case "install_installer_update":
         return simulateUpdate(scenario, channel(args), wait);
+      case "read_extension_device": {
+        // The mount key only changes when the iPod comes or goes, as on the real backend.
+        const mounted = scenario.extensions && !ejected;
+        const key = mounted ? "mock" : "none";
+        if (args.knownMounts === key) return null;
+        if (!mounted) return { mounts: key, snapshot: null };
+        const { api, sdkFloor = null } = scenario.extensions as NonNullable<Scenario["extensions"]>;
+        return {
+          mounts: key,
+          snapshot: {
+            token: "mock",
+            device: {
+              model: "iPod classic 7G",
+              repriseos: "0.5.0",
+              api,
+              firmwareId: "660eb6ff",
+              sdkFloor,
+              ejectReboot: true,
+            },
+            installed: [...copies.values()].map((copy: InstalledCopy) => ({
+              folder: "/Reprise/Extensions/",
+              firmware_id: "660eb6ff",
+              ...copy,
+              requires: copy.requires ?? [],
+              library: copy.library ?? false,
+            })),
+          },
+        };
+      }
+      case "write_extension": {
+        // The header's SDK word sits at byte 8, the manifest's minimum API at byte 36.
+        const { id, version, data } = args.package as {
+          id: string;
+          version: string;
+          data: number[];
+        };
+        const known = copies.get(id);
+        copies.set(id, {
+          id,
+          name: known?.name ?? id,
+          version,
+          api: apiText(data, 36),
+          sdk: apiText(data, 8),
+          requires: known?.requires ?? [],
+          library: known?.library ?? false,
+        });
+        return;
+      }
+      case "remove_extension":
+        copies.delete(String(args.id));
+        return;
+      case "eject_and_reboot":
+        ejected = true;
+        return;
       case "plugin:opener|open_url":
       case "open_installer_download":
         return;
