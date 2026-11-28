@@ -20,13 +20,18 @@ fn api_text(api: u32) -> String {
     format!("{}.{}", api >> 16, api & 0xffff)
 }
 
-/// rv_row and rv_menu_entry grew in API 1.86, so a core at that API or later
-/// only loads packages an SDK at 1.86 or later packed.
-const LAYOUT_API: u32 = 0x10056;
+/// The APIs at which the core's package layout changed: rv_row and
+/// rv_menu_entry grew in 1.86 and rv_pane in 1.89, and rv_pane_extra changed in
+/// 1.92. A core loads packages an SDK at or above the last entry at or below
+/// its own API packed.
+const LAYOUT_APIS: [u32; 3] = [0x10056, 0x10059, 0x1005c];
 
 /// The lowest header SDK a core at `api` loads, when it refuses older ones.
 fn sdk_floor(api: u32) -> Option<u32> {
-    (api >= LAYOUT_API && api >> 16 == LAYOUT_API >> 16).then_some(LAYOUT_API)
+    LAYOUT_APIS
+        .into_iter()
+        .rev()
+        .find(|&floor| api >= floor && api >> 16 == floor >> 16)
 }
 
 #[derive(Debug, Serialize)]
