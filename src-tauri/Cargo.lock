@@ -3167,7 +3167,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "reprise-bundle"
 version = "0.3.0"
-source = "git+https://github.com/RepriseOS/repriseos.git?rev=53985e28452f9948533aae7ac9fc101a205bea71#53985e28452f9948533aae7ac9fc101a205bea71"
+source = "git+https://github.com/RepriseOS/repriseos.git?rev=d85811f3a63910d695a76195b74c0ba6bf6b9c9e#d85811f3a63910d695a76195b74c0ba6bf6b9c9e"
 dependencies = [
  "ed25519-dalek",
  "mu_uefi_decompress",
@@ -3186,9 +3186,12 @@ dependencies = [
 [[package]]
 name = "reprise-device"
 version = "0.3.0"
-source = "git+https://github.com/RepriseOS/repriseos.git?rev=53985e28452f9948533aae7ac9fc101a205bea71#53985e28452f9948533aae7ac9fc101a205bea71"
+source = "git+https://github.com/RepriseOS/repriseos.git?rev=d85811f3a63910d695a76195b74c0ba6bf6b9c9e#d85811f3a63910d695a76195b74c0ba6bf6b9c9e"
 dependencies = [
+ "core-foundation",
+ "core-foundation-sys",
  "getrandom 0.3.4",
+ "libc",
  "rusb",
  "serde",
  "serde_json",
