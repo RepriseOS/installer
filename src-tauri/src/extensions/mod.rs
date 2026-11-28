@@ -15,6 +15,25 @@ fn word(data: &[u8], i: usize) -> Option<u32> {
     Some(u32::from_le_bytes(data.get(i..i + 4)?.try_into().ok()?))
 }
 
+/// The catalog's "major.minor" form of an RVX API word.
+fn api_text(api: u32) -> String {
+    format!("{}.{}", api >> 16, api & 0xffff)
+}
+
+/// The APIs at which the core's package layout changed: rv_row and
+/// rv_menu_entry grew in 1.86 and rv_pane in 1.89, and rv_pane_extra changed in
+/// 1.92. A core loads packages an SDK at or above the last entry at or below
+/// its own API packed.
+const LAYOUT_APIS: [u32; 3] = [0x10056, 0x10059, 0x1005c];
+
+/// The lowest header SDK a core at `api` loads, when it refuses older ones.
+fn sdk_floor(api: u32) -> Option<u32> {
+    LAYOUT_APIS
+        .into_iter()
+        .rev()
+        .find(|&floor| api >= floor && api >> 16 == floor >> 16)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
@@ -24,6 +43,8 @@ pub struct DeviceInfo {
     revision: Option<String>,
     api: Option<String>,
     firmware_id: Option<String>,
+    /// The lowest SDK the firmware loads packages from, when it refuses older ones.
+    sdk_floor: Option<String>,
 }
 
 impl DeviceInfo {
@@ -40,10 +61,12 @@ impl DeviceInfo {
                 let Some((major, minor)) = api.split_once('.') else {
                     return false;
                 };
-                major.parse::<u32>() == Ok(pkg.minimum >> 16)
-                    && minor
-                        .parse::<u32>()
-                        .is_ok_and(|v| v >= (pkg.minimum & 0xffff))
+                let (Ok(major), Ok(minor)) = (major.parse::<u32>(), minor.parse::<u32>()) else {
+                    return false;
+                };
+                major == pkg.minimum >> 16
+                    && minor >= (pkg.minimum & 0xffff)
+                    && sdk_floor(major << 16 | minor).is_none_or(|floor| pkg.sdk >= floor)
                     && u32::from_str_radix(target, 16) == Ok(pkg.target)
             }
             _ => dev,
@@ -61,6 +84,11 @@ pub struct Installed {
     #[serde(skip)]
     path: PathBuf,
     library: bool,
+    /// The package's minimum API and target firmware, in catalog form.
+    api: String,
+    firmware_id: String,
+    /// The SDK that packed it, in catalog form.
+    sdk: String,
 }
 
 #[derive(Serialize)]
