@@ -36,6 +36,18 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
   const busy = operationRunning(state);
   const deviceReady = state.device.status === "ready";
   const compatible = !status.compatibility || status.compatibility.compatible;
+  const copy = status.installedCompatibility;
+  let note = formatSize(entry.package.size);
+  if (copy && !copy.compatible) {
+    note = copy.reason;
+  } else if (status.updateAvailable && status.compatibility && !status.compatibility.compatible) {
+    const { reason } = status.compatibility;
+    note = `Version ${entry.version} ${reason[0].toLowerCase()}${reason.slice(1)}`;
+  } else if (status.installed) {
+    note = `Version ${status.installed} installed`;
+  } else if (status.compatibility && !status.compatibility.compatible) {
+    note = status.compatibility.reason;
+  }
   const requires = entry.requires.map(
     (id) => state.catalog.entries.find((item) => item.id === id) ?? { id, name: id },
   );
@@ -83,7 +95,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
                   <Button.Label>Remove</Button.Label>
                 </Button.Root>
               )}
-              {(!status.installed || status.updateAvailable) && (
+              {(!status.installed || status.updateAvailable || status.canReplace) && (
                 <Button.Root
                   disabled={busy || !deviceReady || !compatible}
                   onClick={() => void installExtension(entry.id)}
@@ -93,15 +105,7 @@ const ExtensionDetails: React.FC<IExtensionDetailsProps> = ({ state, entry, onOp
               )}
             </div>
           )}
-          {indicator ?? (
-            <p className="text-[12px] text-body">
-              {status.compatibility && !status.compatibility.compatible
-                ? status.compatibility.reason
-                : status.installed
-                  ? `Version ${status.installed} installed`
-                  : formatSize(entry.package.size)}
-            </p>
-          )}
+          {indicator ?? <p className="text-[12px] text-body">{note}</p>}
         </div>
       </div>
       {steps}

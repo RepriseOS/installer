@@ -129,17 +129,35 @@ test("installation scenarios report progress, failures, success and cancellation
   for (const scenario of scenarios.filter((item) => item.screen === "installation")) {
     const backend = createMockBackend(scenario, immediate);
     const { channel, events } = capture(backend);
-    const pending = backend.invoke("install", { onEvent: channel });
+    const uninstall = scenario.mode === "uninstall";
+    const pending = backend.invoke(uninstall ? "uninstall" : "install", {
+      onEvent: channel,
+      keepFiles: !!scenario.keepFiles,
+    });
     if (scenario.installFailure) {
       await assert.rejects(pending, { detail: scenario.installFailure.detail });
       // A failure stops at its stage; only a bootloader failure reaches it.
       const reached = events.some((event) => event.stage === "bootloader");
       assert.equal(reached, scenario.installFailure.stage === "bootloader");
     } else {
-      assert.match((await pending).backup_path, /Simulated/);
+      const result = await pending;
+      assert.match(result.backup_path, /Simulated/);
       assert.equal(events.at(-1).cancellable, false);
+      if (uninstall) {
+        assert.equal(result.outcome, "uninstaller_sent");
+        assert.deepEqual(result.leftovers, scenario.keepFiles ? [] : (scenario.leftovers ?? []));
+        assert.equal(
+          events.some((event) => event.stage === "removeFiles"),
+          !scenario.keepFiles,
+        );
+      }
     }
     assert.ok(events.some((event) => event.completed === 50));
+    // Removal is a point of no return; an install closes cancelling only at the bootloader handoff.
+    for (const event of events) {
+      const closed = event.stage === "bootloader" || (uninstall && event.stage === "removeFiles");
+      assert.equal(event.cancellable, !closed, `${scenario.id} ${event.stage}`);
+    }
   }
   const backend = createMockBackend(findScenario("installation-success"), immediate);
   const { channel } = capture(backend);
@@ -242,4 +260,55 @@ test("experimental hardware scenario requires a current explicit approval", asyn
     backend.invoke("check_device", { ...args, allowUnknownHardware: beforePackageChange.check_id }),
     /changed/,
   );
+});
+
+test("extension scenarios simulate a mounted iPod and its copies", async () => {
+  const backend = createMockBackend(findScenario("extensions-older-builds"), immediate);
+  const first = await backend.invoke("read_extension_device", {});
+  assert.equal(first.snapshot.device.sdkFloor, "1.89");
+  assert.deepEqual(
+    first.snapshot.installed.map((copy) => [copy.id, copy.sdk, copy.library, copy.requires]),
+    [
+      ["night-shift", "1.84", false, []],
+      ["dsp", "1.85", true, []],
+      ["crossfeed", "1.89", false, ["dsp"]],
+    ],
+  );
+  assert.equal(await backend.invoke("read_extension_device", { knownMounts: first.mounts }), null);
+  // A package header carries the SDK at byte 8 and the manifest's minimum API at byte 36.
+  const data = new Array(64).fill(0);
+  data.splice(8, 4, 0x59, 0, 1, 0);
+  data.splice(36, 4, 0x54, 0, 1, 0);
+  await backend.invoke("write_extension", { package: { id: "dsp", version: "0.1.1", data } });
+  await backend.invoke("write_extension", { package: { id: "balance", version: "0.1.0", data } });
+  await backend.invoke("remove_extension", { id: "night-shift" });
+  // Writes and removals keep the mount key; the refresh after an operation reads without one.
+  assert.equal(await backend.invoke("read_extension_device", { knownMounts: first.mounts }), null);
+  const next = await backend.invoke("read_extension_device", {});
+  assert.equal(next.mounts, first.mounts);
+  assert.deepEqual(
+    next.snapshot.installed.map((copy) => [
+      copy.id,
+      copy.version,
+      copy.api,
+      copy.sdk,
+      copy.requires,
+    ]),
+    [
+      ["dsp", "0.1.1", "1.84", "1.89", []],
+      ["crossfeed", "0.1.1", "1.84", "1.89", ["dsp"]],
+      ["balance", "0.1.0", "1.84", "1.89", []],
+    ],
+  );
+  await backend.invoke("eject_and_reboot", {});
+  assert.deepEqual(await backend.invoke("read_extension_device", {}), {
+    mounts: "none",
+    snapshot: null,
+  });
+  assert.equal(await backend.invoke("read_extension_device", { knownMounts: "none" }), null);
+  const bare = createMockBackend(findScenario("checks-passed"), immediate);
+  assert.deepEqual(await bare.invoke("read_extension_device", {}), {
+    mounts: "none",
+    snapshot: null,
+  });
 });
