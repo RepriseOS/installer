@@ -6,6 +6,12 @@ export interface Scenario {
   group: string;
   label: string;
   screen: Screen;
+  /** The flow the screen belongs to; install unless set. */
+  mode?: "install" | "uninstall";
+  /** An uninstall that keeps the RepriseOS files. */
+  keepFiles?: boolean;
+  /** What a simulated uninstall could not delete. */
+  leftovers?: string[];
   hint?: string;
   discovery?: "absent" | "multiple" | "normal" | "denied";
   usbSetup?: "required" | "denied" | "unavailable" | "waiting" | "checking" | "check-error";
@@ -24,7 +30,25 @@ export interface Scenario {
   debugExport?: "native" | "cancel" | "error";
   update?: "available" | "manual" | "current" | "check-error" | "download-error" | "installing";
   startUpdate?: boolean;
+  /** A mounted iPod with these extension copies in /Reprise/Extensions/. */
+  extensions?: { api: string; sdkFloor?: string; installed: InstalledCopy[] };
 }
+
+export interface InstalledCopy {
+  id: string;
+  name: string;
+  version: string;
+  /** The manifest's minimum API. */
+  api: string;
+  /** The SDK that packed the copy. */
+  sdk: string;
+  requires?: string[];
+  library?: boolean;
+}
+
+const nightShift = { id: "night-shift", name: "Night Shift", version: "0.1.2" };
+const dsp = { id: "dsp", name: "DSP", version: "0.1.0", library: true };
+const crossfeed = { id: "crossfeed", name: "Crossfeed", requires: ["dsp"] };
 
 export const scenarios: Scenario[] = [
   {
@@ -308,6 +332,49 @@ export const scenarios: Scenario[] = [
   },
   { id: "success", group: "Installation", label: "Success screen", screen: "success" },
   {
+    id: "uninstall",
+    group: "Uninstall",
+    label: "Uninstall screen",
+    screen: "uninstall",
+    mode: "uninstall",
+    hint: "Continue simulates the package download, then the usual DFU steps follow.",
+  },
+  {
+    id: "uninstall-success",
+    group: "Uninstall",
+    label: "Progress to success",
+    screen: "installation",
+    mode: "uninstall",
+  },
+  {
+    id: "uninstall-keep-files",
+    group: "Uninstall",
+    label: "Bootloader only, files kept",
+    screen: "installation",
+    mode: "uninstall",
+    keepFiles: true,
+  },
+  {
+    id: "uninstall-leftovers",
+    group: "Uninstall",
+    label: "Files that would not delete",
+    screen: "installation",
+    mode: "uninstall",
+    leftovers: ["/Reprise, /Revola/Extensions, /Revola/Data or /themes"],
+  },
+  {
+    id: "uninstall-removal-stopped",
+    group: "Uninstall",
+    label: "iPod stopped during file removal",
+    screen: "installation",
+    mode: "uninstall",
+    installFailure: {
+      stage: "removeFiles",
+      detail: "USB control read: Input/Output Error",
+      deviceStopped: true,
+    },
+  },
+  {
     id: "update-available",
     group: "App updates",
     label: "Update available",
@@ -352,6 +419,37 @@ export const scenarios: Scenario[] = [
     screen: "main",
     update: "download-error",
     startUpdate: true,
+  },
+  {
+    id: "extensions-older-builds",
+    group: "Extensions",
+    label: "Older builds on a 1.89 core",
+    screen: "extensions",
+    hint: "A core at RVX API 1.89 skips packages from older SDKs. Night Shift and DSP are such copies, and so is every release in the live catalog.",
+    extensions: {
+      api: "1.89",
+      sdkFloor: "1.89",
+      installed: [
+        { ...nightShift, api: "1.84", sdk: "1.84" },
+        { ...dsp, api: "1.74", sdk: "1.85" },
+        { ...crossfeed, version: "0.1.1", api: "1.84", sdk: "1.89" },
+      ],
+    },
+  },
+  {
+    id: "extensions-installed",
+    group: "Extensions",
+    label: "Installed copies on a 1.82 core",
+    screen: "extensions",
+    hint: "Every build of the major loads. The catalog is live, so installs and updates download real packages.",
+    extensions: {
+      api: "1.82",
+      installed: [
+        { ...nightShift, api: "1.81", sdk: "1.81" },
+        { ...dsp, api: "1.74", sdk: "1.81" },
+        { ...crossfeed, version: "0.1.0", api: "1.81", sdk: "1.81" },
+      ],
+    },
   },
 ];
 

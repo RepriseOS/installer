@@ -8,6 +8,8 @@ pub(super) struct Package {
     pub minimum: u32,
     pub library: bool,
     pub target: u32,
+    /// The header's SDK API, at or above `minimum`.
+    pub sdk: u32,
 }
 
 pub(super) fn valid_id(id: &str) -> bool {
@@ -85,5 +87,6 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Package> {
         minimum,
         library: short(46) == 5,
         target: w(12)?,
+        sdk: w(8)?,
     })
 }

@@ -6,6 +6,7 @@ import {
   type ExtensionsState,
   entryStatus,
   installExtension,
+  installedCompatibility,
   operationRunning,
   removeExtension,
 } from "../../lib/extensions";
@@ -32,17 +33,26 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
   const deviceReady = state.device.status === "ready";
   const legacy = copies?.some((copy) => copy.folder === "/Revola/Extensions/");
 
+  // An installed copy is judged by its own package, the catalog version only for installing.
+  const problem = status
+    ? status.installed
+      ? status.installedCompatibility
+      : status.compatibility
+    : installedCompatibility(id, state);
+  const compatible = !status?.compatibility || status.compatibility.compatible;
+  const update = !!status?.updateAvailable && compatible;
+
   const version = status?.installed ?? copies?.[0]?.version ?? entry?.version;
   const versionText = entry
-    ? status?.updateAvailable
-      ? `${status.installed} → ${entry.version}`
+    ? update
+      ? `${status?.installed} → ${entry.version}`
       : (version ?? "")
     : `${version} · Not in the catalog`;
 
   let label: { text: string; tone: "ok" | "update" | "warn" } | null = null;
-  if (status?.compatibility && !status.compatibility.compatible) {
-    label = { text: status.compatibility.reason, tone: "warn" };
-  } else if (status?.updateAvailable) {
+  if (problem && !problem.compatible) {
+    label = { text: problem.reason, tone: "warn" };
+  } else if (update) {
     label = { text: "Update available", tone: "update" };
   } else if (status?.installed) {
     label = { text: "Installed", tone: "ok" };
@@ -52,15 +62,13 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
     label = { text: "Compatible", tone: "ok" };
   }
 
-  const compatible = !status?.compatibility || status.compatibility.compatible;
-  const action =
-    status?.updateAvailable && compatible
-      ? "update"
-      : mode === "installed"
-        ? "remove"
-        : !status?.installed && compatible
-          ? "install"
-          : null;
+  const action = update
+    ? "update"
+    : mode === "installed"
+      ? "remove"
+      : (!status?.installed && compatible) || status?.canReplace
+        ? "install"
+        : null;
 
   return (
     <li className="border-t border-[#e2dfda] first:border-t-0">
@@ -97,9 +105,9 @@ const ExtensionRow: React.FC<IExtensionRowProps> = ({ state, entry, copies, mode
           )}
         </div>
         {indicator ??
-          (mode === "browse" && status?.compatibility?.compatible === false ? (
+          (mode === "browse" && problem?.compatible === false && !action ? (
             <span className="shrink-0 whitespace-nowrap text-[12px] text-body">
-              {status.compatibility.summary}
+              {problem.summary}
             </span>
           ) : (
             <div className="flex shrink-0 items-center gap-3">
