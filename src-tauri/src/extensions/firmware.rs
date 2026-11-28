@@ -53,7 +53,10 @@ pub(super) fn identify(payload: &[u8], model: String) -> Option<DeviceInfo> {
         eject_reboot: locate(payload, super::eject::FIRMWARE_PATH).is_some(),
         repriseos: version.into(),
         revision: revision.map(str::to_owned),
-        api: capabilities.map(|(api, _)| format!("{}.{}", api >> 16, api & 0xffff)),
+        api: capabilities.map(|(api, _)| super::api_text(api)),
         firmware_id: capabilities.map(|(_, id)| format!("{id:08x}")),
+        sdk_floor: capabilities
+            .and_then(|(api, _)| super::sdk_floor(api))
+            .map(super::api_text),
     })
 }
