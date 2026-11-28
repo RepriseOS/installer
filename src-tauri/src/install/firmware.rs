@@ -32,13 +32,16 @@ pub(super) fn backup(
     } else {
         "BACKUP: fresh full NOR snapshot required before bootloader installation"
     });
-    let nor = session.dump_nor(|p| {
-        let detail = match p.stage {
-            "echo" => "Checking backup connection",
-            "nor_verify" => "Verifying boot firmware backup",
-            _ => "Reading boot firmware",
-        };
-        job.progress(detail, p.completed, p.total)
+    // The dump reads the NOR once and reads it again shifted to verify.
+    let nor = session.dump_nor(|p| match p.stage {
+        "echo" => job.progress("Checking backup connection", p.completed, p.total),
+        "nor_verify" => job.progress_in(
+            "Verifying boot firmware backup",
+            (0.5, 1.0),
+            p.completed,
+            p.total,
+        ),
+        _ => job.progress_in("Reading boot firmware", (0.0, 0.5), p.completed, p.total),
     })?;
     job.emit("Saving boot firmware backup", None);
     let syscfg = SysCfg::parse(&nor.bytes)?;
@@ -51,6 +54,15 @@ pub(super) fn backup(
     Ok(nor.bytes)
 }
 
+/// Whether the decrypted firmware and loader are cached under `data`.
+pub(super) fn cached(data: &Path) -> (bool, bool) {
+    let cache = data.join("firmware");
+    (
+        cache.join("osos-2.0.5.bin").is_file(),
+        cache.join("aupd-2.0.5.bin").is_file(),
+    )
+}
+
 pub(super) fn assemble(
     session: &mut Session,
     ipsw: &Ipsw,
@@ -59,10 +71,15 @@ pub(super) fn assemble(
     data: &Path,
     hardware_policy: reprise_device::firmware::HardwarePolicy,
     job: &mut Job<'_>,
-) -> Result<(Artifacts, Option<crate::theme::Themes>)> {
+) -> Result<Artifacts> {
     job.stage("decrypt", "Preparing Apple firmware")?;
     let cache = data.join("firmware");
     fs::create_dir_all(&cache)?;
+    // The loader is a ninth of the firmware's bytes; see `Job::plan`.
+    let (osos_band, aupd_band) = match cached(data) {
+        (false, false) => ((0.0, 0.9), (0.9, 1.0)),
+        _ => ((0.0, 1.0), (0.0, 1.0)),
+    };
     let cache_file = cache.join("osos-2.0.5.bin");
     let osos = match fs::read(&cache_file) {
         Ok(image) => {
@@ -74,7 +91,10 @@ pub(super) fn assemble(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let partial = partial_path(&cache, "osos-2.0.5", ipsw.ciphertext());
             let plaintext = decrypt_resumable(session, ipsw.ciphertext(), &partial, |p| {
-                job.progress("Decrypting Apple firmware", p.completed, p.total)
+                if p.stage == "echo" {
+                    return job.progress("Decrypting Apple firmware", p.completed, p.total);
+                }
+                job.progress_in("Decrypting Apple firmware", osos_band, p.completed, p.total)
             })?;
             job.emit("Verifying decrypted Apple firmware", None);
             let image = discard_if_invalid(&partial, ipsw.wrap_plaintext(&plaintext))?;
@@ -94,7 +114,10 @@ pub(super) fn assemble(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let partial = partial_path(&cache, "aupd-2.0.5", ipsw.aupd_ciphertext());
             let plaintext = decrypt_resumable(session, ipsw.aupd_ciphertext(), &partial, |p| {
-                job.progress("Decrypting Apple loader", p.completed, p.total)
+                if p.stage == "echo" {
+                    return job.progress("Decrypting Apple loader", p.completed, p.total);
+                }
+                job.progress_in("Decrypting Apple loader", aupd_band, p.completed, p.total)
             })?;
             discard_if_invalid(&partial, ipsw.validate_aupd_plaintext(&plaintext))?;
             save_or_keep(&cache_file, &plaintext, &partial, &plaintext)?;
@@ -111,10 +134,9 @@ pub(super) fn assemble(
         nor,
         hardware_policy,
     )?;
-    let themes = crate::theme::assemble(bundle, &osos)?;
-    job.save_firmware(&artifacts, themes.as_ref())?;
+    job.save_firmware(&artifacts)?;
 
-    Ok((artifacts, themes))
+    Ok(artifacts)
 }
 
 /// Where the decryption of `ciphertext` keeps its progress. The name carries

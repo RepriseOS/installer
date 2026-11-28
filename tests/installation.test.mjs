@@ -8,6 +8,7 @@ import {
   getInstallationState,
   installationLabel,
   startInstallation,
+  startUninstall,
 } from "../src/lib/installation.ts";
 import { getSessionLog } from "../src/lib/sessionLog.ts";
 
@@ -42,7 +43,14 @@ test("starts once, forwards selected hashes, and waits for backend completion", 
     ["uploadOsos", "Reconnecting to iPod"],
     ["bootloader", "Sending bootloader installer"],
   ]) {
-    channel.onmessage({ stage, detail, completed: 100, total: 100, cancellable: true });
+    channel.onmessage({
+      stage,
+      detail,
+      completed: 100,
+      total: 100,
+      progress: 0.5,
+      cancellable: true,
+    });
     assert.equal(installationLabel(getInstallationState().event), detail);
   }
   const progress = getInstallationState();
@@ -51,6 +59,7 @@ test("starts once, forwards selected hashes, and waits for backend completion", 
     detail: "Helper USB interface opened; bulk OUT endpoint 0x02",
     completed: null,
     total: null,
+    progress: 0.5,
     cancellable: false,
     diagnostic: true,
   });
@@ -107,6 +116,7 @@ test("cancellation waits for cleanup and is disabled during NOR installation", a
     detail: "Installing",
     completed: null,
     total: null,
+    progress: 0.9,
     cancellable: false,
   });
   await cancelInstallation();
@@ -129,6 +139,41 @@ test("disk-only update logs its outcome without claiming a bootloader install", 
   assert.match(log, /UPDATE COMPLETE/);
   assert.match(log, /bootloader unchanged; restart requested/);
   assert.doesNotMatch(log, /BOOTLOADER HANDOFF/);
+});
+
+test("uninstall sends the package and the keep-files choice and logs leftovers", async () => {
+  mockIPC((command, args) => {
+    assert.equal(command, "uninstall");
+    assert.equal(args.packageDigest, "package-hash");
+    assert.equal(args.keepFiles, false);
+    assert.equal(args.firmwareSha256, undefined);
+    return {
+      backup_path: "/backups/remove",
+      operation: "uninstall",
+      outcome: "uninstaller_sent",
+      leftovers: ["/.reprise-*.part"],
+    };
+  });
+  const first = getSessionLog().length;
+  startUninstall("package-hash", false);
+  assert.equal(installationLabel(getInstallationState().event), "Preparing uninstall");
+  await setImmediate();
+  const state = getInstallationState();
+  assert.equal(state.operation, "uninstall");
+  assert.equal(state.outcome, "uninstaller_sent");
+  assert.deepEqual(state.leftovers, ["/.reprise-*.part"]);
+  const log = getSessionLog().slice(first).join("\n");
+  assert.match(log, /UNINSTALL BOOTLOADER HANDOFF: bootloader uninstaller sent/);
+  assert.match(log, /Left on the iPod: \/\.reprise-\*\.part/);
+
+  mockIPC((_command, args) => {
+    assert.equal(args.keepFiles, true);
+    return { backup_path: "/backups/keep", operation: "uninstall", outcome: "uninstaller_sent" };
+  });
+  startUninstall("package-hash", true);
+  await setImmediate();
+  assert.equal(getInstallationState().keepFiles, true);
+  assert.deepEqual(getInstallationState().leftovers, []);
 });
 
 test("channel creation failure stops the job and allows retry", async () => {
@@ -157,6 +202,13 @@ test("failure message says what happened, what changed and how to go on", () => 
   const stop = (cause, next = null) => ({ cause, next, retry: false });
   assert.deepEqual(
     message({ error: "Upload helper failed (code -326, errno 0)" }),
+    stop(
+      "The iPod’s HFS+ volume was not cleanly unmounted. Nothing on it was changed.",
+      "Let the iPod boot and appear in Finder. Eject it, leave the cable connected, then enter DFU mode again.",
+    ),
+  );
+  assert.deepEqual(
+    message({ stage: "removeFiles", error: "Upload helper failed (code -326, errno 0)" }),
     stop(
       "The iPod’s HFS+ volume was not cleanly unmounted. Nothing on it was changed.",
       "Let the iPod boot and appear in Finder. Eject it, leave the cable connected, then enter DFU mode again.",
@@ -218,5 +270,14 @@ test("failure message says what happened, what changed and how to go on", () => 
   assert.deepEqual(
     message({ stage: "uploadOsos", device_stopped: true, cancelled: true }),
     stop("You cancelled the installation."),
+  );
+  assert.deepEqual(
+    failureMessage(failure({ stage: "removeFiles", cancelled: true }), { uninstall: true }),
+    stop("You cancelled the uninstall."),
+  );
+  // A removal that stopped may have deleted files already; it can run again.
+  assert.deepEqual(
+    failureMessage(failure({ stage: "removeFiles", device_stopped: true }), { uninstall: true }),
+    retry("Your iPod stopped responding.", "Put your iPod back into DFU mode to try again."),
   );
 });

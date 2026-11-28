@@ -2,12 +2,18 @@ pub(super) mod diagnostics;
 mod firmware;
 mod job;
 mod transfer;
+pub mod uninstall;
 
-use crate::{device::UsbState, firmware::FirmwareState, package::PackageState};
+use crate::{
+    device::{CheckedDevice, UsbState},
+    firmware::FirmwareState,
+    package::PackageState,
+};
 use job::Job;
 pub use job::{InstallEvent, InstallFailure, InstallResult};
-use reprise_bundle::assembly;
+use reprise_bundle::{assembly, VerifiedBundle};
 use reprise_device::UploadHelper;
+use std::sync::Arc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -54,6 +60,18 @@ pub async fn install(
     package_digest: String,
     on_event: Channel<InstallEvent>,
 ) -> std::result::Result<InstallResult, InstallFailure> {
+    start(app, move |app, state| {
+        run(app, state, firmware_sha256, package_digest, on_event)
+    })
+    .await
+}
+
+/// Run an install or uninstall job on the blocking pool while holding the USB
+/// operation and the running flag, which keeps the window open.
+async fn start(
+    app: AppHandle,
+    job: impl FnOnce(&AppHandle, &InstallState) -> Result<InstallResult> + Send + 'static,
+) -> std::result::Result<InstallResult, InstallFailure> {
     let plain = |e: &dyn std::fmt::Display| InstallFailure::plain(e.to_string());
     let operation = app.state::<UsbState>().acquire().map_err(|e| plain(&e))?;
     let state = app.state::<InstallState>();
@@ -67,15 +85,44 @@ pub async fn install(
         let _operation = operation;
         let state = app.state::<InstallState>();
         let _running = Running(&state);
-        run(&app, &state, firmware_sha256, package_digest, on_event).map_err(|e| {
-            match e.downcast::<InstallFailure>() {
-                Ok(failure) => *failure,
-                Err(e) => plain(&e),
-            }
+        job(&app, &state).map_err(|e| match e.downcast::<InstallFailure>() {
+            Ok(failure) => *failure,
+            Err(e) => plain(&e),
         })
     })
     .await
     .map_err(|e| plain(&e))?
+}
+
+/// The prepared package, if it is still the one the user chose.
+fn selected_bundle(app: &AppHandle, package_digest: &str) -> Result<Arc<VerifiedBundle>> {
+    Ok(app
+        .state::<PackageState>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .filter(|b| b.digest() == package_digest)
+        .cloned()
+        .ok_or("Choose the package again.")?)
+}
+
+/// The device check result, consumed so a job never runs twice on one check.
+fn take_checked(app: &AppHandle, bundle: &VerifiedBundle) -> Result<CheckedDevice> {
+    let checked = app
+        .state::<UsbState>()
+        .checked
+        .lock()
+        .map_err(|e| e.to_string())?
+        .take()
+        .ok_or("Return to the DFU guide and check your iPod again.")?;
+    if !checked.report.compatible
+        || checked.report.cleanup != reprise_device::Cleanup::Idle
+        || checked.package_digest != bundle.digest()
+    {
+        return Err("Device or package changed. Run device checks again.".into());
+    }
+    Ok(checked)
 }
 
 fn run(
@@ -86,15 +133,7 @@ fn run(
     channel: Channel<InstallEvent>,
 ) -> Result<InstallResult> {
     let ipsw = app.state::<FirmwareState>().selected(&firmware_sha256)?;
-    let bundle = app
-        .state::<PackageState>()
-        .0
-        .lock()
-        .map_err(|e| e.to_string())?
-        .as_ref()
-        .filter(|b| b.digest() == package_digest)
-        .cloned()
-        .ok_or("Choose the package again.")?;
+    let bundle = selected_bundle(app, &package_digest)?;
     crate::package::require_target(&bundle.manifest().compatibility, ipsw.metadata.target()?)?;
     let helper = UploadHelper::from_bytes(
         bundle.file("usb_helper", "image")?,
@@ -104,24 +143,12 @@ fn run(
         return Err("Choose a newer package with storage inspection support.".into());
     }
     let expected_bootloader = assembly::bootloader_fingerprint(&bundle)?;
-    let checked = app
-        .state::<UsbState>()
-        .checked
-        .lock()
-        .map_err(|e| e.to_string())?
-        .take()
-        .ok_or("Return to the DFU guide and check your iPod again.")?;
+    let checked = take_checked(app, &bundle)?;
     let identity = checked
         .report
         .identity
         .as_ref()
         .ok_or("Missing checked device identity.")?;
-    if !checked.report.compatible
-        || checked.report.cleanup != reprise_device::Cleanup::Idle
-        || checked.package_digest != package_digest
-    {
-        return Err("Device or package changed. Run device checks again.".into());
-    }
     let hardware_policy = checked.hardware_policy;
     crate::package::require_device_with_policy(
         &bundle.manifest().compatibility,
@@ -135,7 +162,7 @@ fn run(
         &directory.join("inputs.json"),
         &serde_json::json!({"ipsw": ipsw.sha256, "bundle": bundle.digest()}),
     )?;
-    let mut job = Job::new(state, channel, directory)?;
+    let mut job = Job::new(state, channel, directory, "install")?;
     job.log(format!(
         "Installer {}; package {} ({}); IPSW {}",
         env!("CARGO_PKG_VERSION"),
@@ -167,17 +194,22 @@ fn run(
         let mut session = checked.session;
         job.stage("checkBootloader", "Checking installed bootloader")?;
         let bootloader = session.inspect_bootloader(|p| {
-            job.progress("Verifying installed bootloader", p.completed, p.total)
+            job.progress_in(
+                "Verifying installed bootloader",
+                (0.0, 1.0),
+                p.completed,
+                p.total,
+            )
         })?;
         job.save_json("bootloader.json", &bootloader)?;
         job.log(format!("Detected bootloader: apple={}; code_sha256={}; code_bytes={}; entrypoint={:#x}; NOR bytes inspected={}",
             bootloader.apple, bootloader.fingerprint.sha256, bootloader.fingerprint.bytes,
             bootloader.fingerprint.entrypoint, bootloader.read_bytes));
         let action = assembly::BootloaderAction::for_installed(&bootloader, &expected_bootloader);
-        job.plan(action)?;
+        job.plan(action, firmware::cached(&data))?;
         session = transfer::inspect_storage(session, &helper, &bundle, &mut job)?;
         let nor = firmware::backup(&mut session, identity, action, &mut job)?;
-        let (artifacts, themes) = firmware::assemble(
+        let artifacts = firmware::assemble(
             &mut session,
             &ipsw,
             &nor,
@@ -186,14 +218,7 @@ fn run(
             hardware_policy,
             &mut job,
         )?;
-        transfer::install(
-            session,
-            &helper,
-            &artifacts,
-            themes.as_ref(),
-            action,
-            &mut job,
-        )
+        transfer::install(session, &helper, &artifacts, action, &mut job)
     })();
     job.finish(outcome)
 }

@@ -37,13 +37,14 @@ export async function simulateInstallation(
   wait: Wait,
   cancelled: () => boolean,
 ) {
-  for (const [stage, detail] of stages) {
+  for (const [index, [stage, detail]] of stages.entries()) {
     for (const completed of [0, 25, 50, 75, 100]) {
       channel.onmessage({
         stage: stage === "verify" ? "uploadOsos" : stage,
         detail,
         completed,
         total: 100,
+        progress: (index + completed / 100) / stages.length,
         cancellable: stage !== "bootloader",
       });
       await wait();
@@ -60,6 +61,49 @@ export async function simulateInstallation(
     operation: "install",
     outcome: "installer_sent",
     backup_path: "Simulated backup (no files written)",
+  };
+}
+
+const uninstallStages = [
+  ["checkBootloader", "Checking installed bootloader"],
+  ["backup", "Backing up boot firmware"],
+  ["removeFiles", "Removing RepriseOS files"],
+  ["bootloader", "Sending bootloader uninstaller"],
+] as const;
+
+export async function simulateUninstall(
+  scenario: Scenario,
+  channel: EventChannel<InstallEvent>,
+  wait: Wait,
+  cancelled: () => boolean,
+  keepFiles: boolean,
+) {
+  const stages = uninstallStages.filter(([stage]) => !(keepFiles && stage === "removeFiles"));
+  for (const [index, [stage, detail]] of stages.entries()) {
+    for (const completed of [0, 50, 100]) {
+      channel.onmessage({
+        stage,
+        detail,
+        completed,
+        total: 100,
+        progress: (index + completed / 100) / stages.length,
+        cancellable: stage === "checkBootloader" || stage === "backup",
+      });
+      await wait();
+      if (cancelled()) {
+        const detail = "Uninstall cancelled.";
+        throw { ...failure({ stage, detail }), cancelled: true };
+      }
+      if (scenario.installFailure?.stage === stage && completed === 50) {
+        throw failure(scenario.installFailure);
+      }
+    }
+  }
+  return {
+    operation: "uninstall",
+    outcome: "uninstaller_sent",
+    backup_path: "Simulated backup (no files written)",
+    leftovers: keepFiles ? [] : (scenario.leftovers ?? []),
   };
 }
 

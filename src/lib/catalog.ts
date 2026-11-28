@@ -53,6 +53,8 @@ export interface DeviceInfo {
   repriseos: string;
   api: string | null;
   firmwareId: string | null;
+  /** The lowest SDK the firmware loads packages from, when it refuses older ones. */
+  sdkFloor?: string | null;
   revision?: string | null;
   token?: string;
   ejectReboot?: boolean;
@@ -112,7 +114,10 @@ export type Compatibility =
   | { compatible: false; summary: string; reason: string };
 
 /** Mirrors the firmware's package checks plus the listing's optional requirements. */
-export function checkCompatibility(entry: CatalogEntry, device: DeviceInfo): Compatibility {
+export function checkCompatibility(
+  entry: Pick<CatalogEntry, "api" | "firmware_id" | "min_repriseos" | "models"> & { sdk?: string },
+  device: DeviceInfo,
+): Compatibility {
   const development = device.repriseos === "Development";
   const release = device.repriseos.split("+")[0];
   const releaseCore = release.split("-")[0];
@@ -137,21 +142,31 @@ export function checkCompatibility(entry: CatalogEntry, device: DeviceInfo): Com
       reason: "Built for different firmware",
     };
   }
+  const newerRelease =
+    !development &&
+    !!entry.min_repriseos &&
+    (compareVersions(entry.min_repriseos, releaseCore) > 0 ||
+      (entry.min_repriseos === releaseCore && release.includes("-")));
   const [major] = entry.api.split(".");
   const deviceMajor = device.api?.split(".")[0];
   if (device.api && (major !== deviceMajor || compareVersions(entry.api, device.api) > 0)) {
     return {
       compatible: false,
       summary: "Needs newer RepriseOS",
-      reason: `Needs a newer RepriseOS (API ${entry.api})`,
+      reason: newerRelease
+        ? `Needs RepriseOS ${entry.min_repriseos}`
+        : `Needs a newer RepriseOS (API ${entry.api})`,
     };
   }
-  if (
-    !development &&
-    entry.min_repriseos &&
-    (compareVersions(entry.min_repriseos, releaseCore) > 0 ||
-      (entry.min_repriseos === releaseCore && release.includes("-")))
-  ) {
+  // A catalog entry has no SDK field; the SDK that packed it is at least its api.
+  if (device.sdkFloor && compareVersions(entry.sdk ?? entry.api, device.sdkFloor) < 0) {
+    return {
+      compatible: false,
+      summary: "Older build",
+      reason: "Built for an older RepriseOS",
+    };
+  }
+  if (newerRelease) {
     return {
       compatible: false,
       summary: "Needs newer RepriseOS",

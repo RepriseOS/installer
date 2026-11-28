@@ -6,7 +6,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::ipc::Channel;
 
@@ -14,10 +14,45 @@ use tauri::ipc::Channel;
 pub struct InstallEvent {
     stage: String,
     detail: String,
+    /// Progress of the current step, for the journal.
     completed: Option<u64>,
     total: Option<u64>,
+    /// Share of the whole operation done, 0..1, never decreasing.
+    progress: f64,
+    elapsed_ms: u64,
     cancellable: bool,
     diagnostic: bool,
+}
+
+/// Phases in order with their typical seconds on a 6G over USB 2. A phase
+/// that will not run has weight 0 and leaves the total. The upload weight is
+/// replaced from the file sizes once they are known.
+const PHASES: [(&str, u32); 8] = [
+    ("checkBootloader", 15),
+    ("storage", 5),
+    ("backup", 148),
+    ("decrypt", 801),
+    ("assemble", 2),
+    ("upload", 15),
+    ("removeFiles", 5),
+    ("handoff", 3),
+];
+
+fn phase_index(name: &str) -> usize {
+    PHASES
+        .iter()
+        .position(|(phase, _)| *phase == name)
+        .expect("known phase")
+}
+
+/// The phase a stage key belongs to.
+fn phase_of(stage: &str) -> Option<usize> {
+    let phase = match stage {
+        "uploadLoader" | "uploadOsos" => "upload",
+        "bootloader" | "restart" => "handoff",
+        other => other,
+    };
+    PHASES.iter().position(|(name, _)| *name == phase)
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -25,6 +60,10 @@ pub struct InstallEvent {
 pub(super) enum InstallOutcome {
     InstallerSent,
     FilesUpdated,
+    /// The bootloader uninstaller was sent; the iPod restores Apple's bootloader.
+    UninstallerSent,
+    /// Apple's bootloader was already in place; only the files went.
+    FilesRemoved,
 }
 
 /// Why an install stopped, for the failure screen. `detail` is the full
@@ -82,6 +121,8 @@ pub struct InstallResult {
     backup_path: String,
     outcome: InstallOutcome,
     operation: Option<&'static str>,
+    /// What an uninstall could not delete from the iPod.
+    leftovers: Vec<&'static str>,
 }
 
 pub(super) struct Job<'a> {
@@ -95,6 +136,15 @@ pub(super) struct Job<'a> {
     cancellable: bool,
     operation: Option<&'static str>,
     bootloader_action: Option<BootloaderAction>,
+    /// What an uninstall could not delete; reported with the result.
+    pub(super) leftovers: Vec<&'static str>,
+    /// The iPod took over: it is receiving a bootloader image or a restart request.
+    handed_off: bool,
+    started: Instant,
+    weights: [u32; PHASES.len()],
+    phase: usize,
+    fraction: f64,
+    reported: f64,
 }
 
 impl<'a> Job<'a> {
@@ -102,6 +152,7 @@ impl<'a> Job<'a> {
         state: &'a InstallState,
         channel: Channel<InstallEvent>,
         directory: PathBuf,
+        operation: &str,
     ) -> Result<Self> {
         let device_directory = directory
             .parent()
@@ -111,6 +162,15 @@ impl<'a> Job<'a> {
             .write(true)
             .create_new(true)
             .open(directory.join("events.jsonl"))?;
+        let mut weights = PHASES.map(|(_, seconds)| seconds);
+        let skipped: &[&str] = if operation == "uninstall" {
+            &["storage", "decrypt", "assemble", "upload"]
+        } else {
+            &["removeFiles"]
+        };
+        for phase in skipped {
+            weights[phase_index(phase)] = 0;
+        }
         Ok(Self {
             directory,
             device_directory,
@@ -120,18 +180,47 @@ impl<'a> Job<'a> {
             stage: "prepare".into(),
             log_error: None,
             cancellable: true,
-            operation: None,
+            // Named before the first stage, so a failure there reports it. An
+            // install becomes install or update once the bootloader is known.
+            operation: (operation == "uninstall").then_some("uninstall"),
             bootloader_action: None,
+            leftovers: Vec::new(),
+            handed_off: false,
+            started: Instant::now(),
+            weights,
+            phase: 0,
+            fraction: 0.0,
+            reported: 0.0,
         })
     }
 
-    pub(super) fn plan(&mut self, action: BootloaderAction) -> Result<()> {
+    fn cancelled_error(&self) -> Box<dyn std::error::Error + Send + Sync> {
+        if self.operation == Some("uninstall") {
+            "Uninstall cancelled.".into()
+        } else {
+            "Installation cancelled.".into()
+        }
+    }
+
+    /// `cached` says whether the decrypted firmware and loader are already on disk.
+    pub(super) fn plan(&mut self, action: BootloaderAction, cached: (bool, bool)) -> Result<()> {
         let operation = match action {
             BootloaderAction::Install => "install",
             BootloaderAction::Keep | BootloaderAction::Upgrade => "update",
         };
         self.operation = Some(operation);
         self.bootloader_action = Some(action);
+        if action == BootloaderAction::Keep && self.has_nor_snapshot() {
+            self.weights[phase_index("backup")] = 0;
+        }
+        // The loader is a ninth of the firmware's bytes and decrypts at the same rate.
+        let decrypt = &mut self.weights[phase_index("decrypt")];
+        *decrypt = match cached {
+            (true, true) => 0,
+            (true, false) => *decrypt / 10,
+            (false, true) => *decrypt - *decrypt / 10,
+            (false, false) => *decrypt,
+        };
         self.save_json(
             "plan.json",
             &serde_json::json!({
@@ -156,6 +245,35 @@ impl<'a> Job<'a> {
         Ok(())
     }
 
+    pub(super) fn plan_uninstall(
+        &mut self,
+        apple_bootloader: bool,
+        keep_files: bool,
+    ) -> Result<()> {
+        if apple_bootloader {
+            self.weights[phase_index("backup")] = 0;
+        }
+        self.save_json(
+            "plan.json",
+            &serde_json::json!({
+                "operation": "uninstall",
+                "apple_bootloader": apple_bootloader,
+                "keep_files": keep_files,
+            }),
+        )?;
+        self.emit(
+            match (apple_bootloader, keep_files) {
+                (true, _) => "UNINSTALL: Apple bootloader detected; removing RepriseOS files only",
+                (false, false) => {
+                    "UNINSTALL: removing RepriseOS files, then restoring Apple's bootloader"
+                }
+                (false, true) => "UNINSTALL: keeping RepriseOS files; restoring Apple's bootloader",
+            },
+            None,
+        );
+        Ok(())
+    }
+
     pub(super) fn emit(&mut self, detail: impl Into<String>, progress: Option<(u64, u64)>) {
         self.emit_event(detail.into(), progress, false);
     }
@@ -165,11 +283,15 @@ impl<'a> Job<'a> {
     }
 
     fn emit_event(&mut self, detail: String, progress: Option<(u64, u64)>, diagnostic: bool) {
+        // A phase that regains its weight grows the total; the bar still never moves back.
+        self.reported = self.reported.max(self.overall());
         let event = InstallEvent {
             stage: self.stage.clone(),
             detail,
             completed: progress.map(|p| p.0),
             total: progress.map(|p| p.1),
+            progress: self.reported,
+            elapsed_ms: self.started.elapsed().as_millis() as u64,
             cancellable: self.cancellable,
             diagnostic,
         };
@@ -193,7 +315,7 @@ impl<'a> Job<'a> {
             .map_err(|e| e.to_string())?
             .requested
         {
-            return Err("Installation cancelled.".into());
+            return Err(self.cancelled_error());
         }
         Ok(())
     }
@@ -201,11 +323,16 @@ impl<'a> Job<'a> {
     pub(super) fn stage(&mut self, stage: &str, detail: &str) -> Result<()> {
         self.check()?;
         self.stage = stage.into();
+        if let Some(phase) = phase_of(stage).filter(|&phase| phase > self.phase) {
+            self.phase = phase;
+            self.fraction = 0.0;
+        }
         self.emit(detail, None);
         self.journal.sync_all()?;
         self.check()
     }
 
+    /// Journals a step's own count without moving the bar.
     pub(super) fn progress(
         &mut self,
         detail: &str,
@@ -215,6 +342,53 @@ impl<'a> Job<'a> {
         self.emit(detail, Some((completed as u64, total as u64)));
         self.check()
             .map_err(|e| reprise_device::Error::Invalid(e.to_string()))
+    }
+
+    /// Like `progress`, and moves the phase through `band` (start, end) of its share.
+    pub(super) fn progress_in(
+        &mut self,
+        detail: &str,
+        band: (f64, f64),
+        completed: usize,
+        total: usize,
+    ) -> reprise_device::Result<()> {
+        if total > 0 {
+            let (start, end) = band;
+            self.set_fraction(start + (end - start) * completed as f64 / total as f64);
+        }
+        self.progress(detail, completed, total)
+    }
+
+    /// How far the current phase is, 0..1. A phase planned as skipped that
+    /// reports progress anyway gets its default weight back.
+    pub(super) fn set_fraction(&mut self, fraction: f64) {
+        if self.weights[self.phase] == 0 {
+            self.weights[self.phase] = PHASES[self.phase].1;
+        }
+        self.fraction = self.fraction.max(fraction.clamp(0.0, 1.0));
+    }
+
+    pub(super) fn set_weight(&mut self, phase: &str, seconds: u32) {
+        self.weights[phase_index(phase)] = seconds;
+    }
+
+    fn overall(&self) -> f64 {
+        let total: u32 = self.weights.iter().sum();
+        if total == 0 {
+            return 0.0;
+        }
+        let done: u32 = self.weights[..self.phase].iter().sum();
+        (done as f64 + self.weights[self.phase] as f64 * self.fraction) / total as f64
+    }
+
+    /// Whether a complete NOR backup exists for this iPod. `reuse_nor` verifies it.
+    fn has_nor_snapshot(&self) -> bool {
+        let Ok(entries) = fs::read_dir(self.device_directory.join("nor")) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            fs::metadata(entry.path().join("nor.bin")).is_ok_and(|m| m.len() == NOR_SIZE as u64)
+        })
     }
 
     pub(super) fn save_json(&self, name: &str, value: &impl Serialize) -> Result<()> {
@@ -297,30 +471,9 @@ impl<'a> Job<'a> {
         Ok(None)
     }
 
-    pub(super) fn save_firmware(
-        &self,
-        artifacts: &Artifacts,
-        themes: Option<&crate::theme::Themes>,
-    ) -> Result<()> {
+    pub(super) fn save_firmware(&self, artifacts: &Artifacts) -> Result<()> {
         let staged = self.directory.join("firmware");
-        let mut report = artifacts.write(&staged)?;
-        if let Some(themes) = themes {
-            for (name, bytes) in [("default", &themes.default), ("dark", &themes.dark)] {
-                let relative = format!("themes/{name}/theme.bin");
-                let file = staged.join(&relative);
-                fs::create_dir_all(file.parent().unwrap())?;
-                save(&file, bytes)?;
-                report.files.insert(
-                    relative,
-                    reprise_bundle::assembly::FileReport {
-                        bytes: bytes.len(),
-                        sha256: reprise_bundle::sha256(bytes),
-                    },
-                );
-            }
-            fs::remove_file(staged.join("assembly.json"))?;
-            save_json(&staged.join("assembly.json"), &report)?;
-        }
+        let report = artifacts.write(&staged)?;
         let latest = self.device_directory.join("firmware");
         match fs::remove_dir_all(&latest) {
             Ok(()) => {}
@@ -335,16 +488,33 @@ impl<'a> Job<'a> {
         self.begin_handoff("bootloader", "Preparing bootloader installer")
     }
 
+    pub(super) fn begin_bootloader_removal(&mut self) -> Result<()> {
+        self.begin_handoff("bootloader", "Preparing bootloader uninstaller")
+    }
+
     pub(super) fn begin_restart(&mut self) -> Result<()> {
         self.begin_handoff("restart", "Restarting iPod")
     }
 
+    /// File removal cannot be cancelled: once files are gone the bootloader has
+    /// to be restored, and a cancel between the two would leave the iPod with
+    /// the RepriseOS bootloader and no firmware file.
+    pub(super) fn begin_file_removal(&mut self) -> Result<()> {
+        self.stop_cancelling("removeFiles", "Removing RepriseOS files")
+    }
+
     fn begin_handoff(&mut self, stage: &str, detail: &str) -> Result<()> {
+        self.stop_cancelling(stage, detail)?;
+        self.handed_off = true;
+        Ok(())
+    }
+
+    fn stop_cancelling(&mut self, stage: &str, detail: &str) -> Result<()> {
         self.stage(stage, detail)?;
         {
             let mut cancellation = self.state.cancellation.lock().map_err(|e| e.to_string())?;
             if cancellation.requested {
-                return Err("Installation cancelled.".into());
+                return Err(self.cancelled_error());
             }
             cancellation.allowed = false;
         }
@@ -357,15 +527,22 @@ impl<'a> Job<'a> {
     pub(super) fn finish(mut self, outcome: Result<InstallOutcome>) -> Result<InstallResult> {
         match outcome {
             Ok(outcome) => {
+                self.phase = PHASES.len() - 1;
+                self.fraction = 1.0;
                 self.log(match outcome {
                     InstallOutcome::FilesUpdated => "UPDATE COMPLETE: disk files verified; NOR unchanged; restart requested; boot not verified",
                     InstallOutcome::InstallerSent => "BOOTLOADER HANDOFF: disk files verified; NOR installer sent; NOR completion not read back",
+                    InstallOutcome::UninstallerSent => "UNINSTALL HANDOFF: NOR uninstaller sent; NOR completion not read back",
+                    InstallOutcome::FilesRemoved => "UNINSTALL COMPLETE: disk files removed; NOR unchanged; restart requested; boot not verified",
                 });
+                if !self.leftovers.is_empty() {
+                    self.log(format!("Left on the iPod: {}", self.leftovers.join(", ")));
+                }
                 // The iPod may already be installing the bootloader, so a log that
                 // cannot be written must not turn the result into a failure.
                 let saved = save_json(
                     &self.directory.join("result.json"),
-                    &serde_json::json!({"state": outcome, "operation": self.operation, "bootloader_action": self.bootloader_action}),
+                    &serde_json::json!({"state": outcome, "operation": self.operation, "bootloader_action": self.bootloader_action, "leftovers": self.leftovers}),
                 );
                 if let Err(e) = saved.and_then(|()| Ok(self.journal.sync_all()?)) {
                     self.log(format!("Could not save the result: {e}"));
@@ -374,11 +551,12 @@ impl<'a> Job<'a> {
                     backup_path: self.directory.to_string_lossy().into_owned(),
                     outcome,
                     operation: self.operation,
+                    leftovers: self.leftovers,
                 })
             }
             Err(error) => {
                 // After the handoff the iPod may be installing the bootloader.
-                let next = if !self.cancellable {
+                let next = if self.handed_off {
                     "Leave the iPod connected until it restarts."
                 } else {
                     "Re-enter DFU before retrying."

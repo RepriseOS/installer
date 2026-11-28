@@ -1,9 +1,13 @@
 use super::*;
 
 fn job(state: &InstallState) -> Job<'_> {
+    job_for(state, "install")
+}
+
+fn job_for<'a>(state: &'a InstallState, operation: &str) -> Job<'a> {
     let device = format!("reprise-job-test-{:?}", std::thread::current().id());
     let directory = backup_directory(&std::env::temp_dir(), device.as_bytes()).unwrap();
-    Job::new(state, Channel::new(|_| Ok(())), directory).unwrap()
+    Job::new(state, Channel::new(|_| Ok(())), directory, operation).unwrap()
 }
 
 #[test]
@@ -33,6 +37,88 @@ fn bootloader_handoff_honors_pending_cancellation_and_closes_further_requests() 
     assert_eq!(events[0]["cancellable"], true);
     assert_eq!(events[1]["cancellable"], false);
     assert_eq!(events[1]["stage"], "bootloader");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn file_removal_closes_cancelling_without_counting_as_a_handoff() {
+    let state = InstallState::default();
+    *state.cancellation.lock().unwrap() = super::super::Cancellation {
+        requested: true,
+        allowed: true,
+    };
+    let mut removal = job_for(&state, "uninstall");
+    let directory = removal.directory.clone();
+    assert_eq!(
+        removal.begin_file_removal().unwrap_err().to_string(),
+        "Uninstall cancelled."
+    );
+    assert!(state.cancellation.lock().unwrap().allowed);
+
+    state.cancellation.lock().unwrap().requested = false;
+    removal.begin_file_removal().unwrap();
+    assert!(!state.cancellation.lock().unwrap().allowed);
+    let events: Vec<serde_json::Value> = fs::read_to_string(directory.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.last().unwrap()["stage"], "removeFiles");
+    assert_eq!(events.last().unwrap()["cancellable"], false);
+    let error = removal
+        .finish(Err("Disconnected".into()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.ends_with("Re-enter DFU before retrying."));
+    fs::remove_dir_all(directory).unwrap();
+
+    let mut handoff = job(&state);
+    let directory = handoff.directory.clone();
+    handoff.begin_bootloader_removal().unwrap();
+    let error = handoff
+        .finish(Err("Disconnected".into()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.ends_with("Leave the iPod connected until it restarts."));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn an_uninstall_is_named_before_its_first_stage() {
+    let state = InstallState::default();
+    let mut uninstall = job_for(&state, "uninstall");
+    let directory = uninstall.directory.clone();
+    uninstall
+        .stage("checkBootloader", "Checking installed bootloader")
+        .unwrap();
+    state.cancellation.lock().unwrap().requested = true;
+    let cancelled = uninstall
+        .stage("backup", "Reading boot firmware")
+        .unwrap_err();
+    assert_eq!(cancelled.to_string(), "Uninstall cancelled.");
+    state.cancellation.lock().unwrap().requested = false;
+    let error = uninstall
+        .finish(Err("Disconnected".into()))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.starts_with("UNINSTALL failed during checkBootloader: Disconnected"));
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.join("result.json")).unwrap()).unwrap();
+    assert_eq!(saved["operation"], "uninstall");
+    fs::remove_dir_all(directory).unwrap();
+
+    let mut install = job(&state);
+    let directory = install.directory.clone();
+    state.cancellation.lock().unwrap().requested = true;
+    let cancelled = install
+        .stage("backup", "Reading boot firmware")
+        .unwrap_err();
+    assert_eq!(cancelled.to_string(), "Installation cancelled.");
+    state.cancellation.lock().unwrap().requested = false;
+    drop(install);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -109,6 +195,7 @@ fn nor_snapshots_are_reused_verified_and_separated_by_device_and_content() {
             &state,
             Channel::new(|_| Ok(())),
             backup_directory(&root, device).unwrap(),
+            "install",
         )
         .unwrap()
     };
@@ -185,40 +272,25 @@ fn firmware_is_replaced_per_device_while_run_reports_remain() {
             &state,
             Channel::new(|_| Ok(())),
             backup_directory(&root, device).unwrap(),
+            "install",
         )
         .unwrap();
         artifacts.osos = osos.to_vec();
-        let themes = crate::theme::Themes {
-            default: vec![1, 2],
-            dark: vec![3, 4],
-        };
-        job.save_firmware(&artifacts, Some(&themes)).unwrap();
-        assert_eq!(
-            fs::read(
-                job.device_directory
-                    .join("firmware/themes/default/theme.bin")
-            )
-            .unwrap(),
-            themes.default
-        );
-        assert_eq!(
-            fs::read(job.device_directory.join("firmware/themes/dark/theme.bin")).unwrap(),
-            themes.dark
-        );
+        job.save_firmware(&artifacts).unwrap();
         assert!(!job.directory.join("firmware").exists());
         reports.push(job.directory.join("assembly.json"));
     }
     assert_eq!(
-        fs::read(root.join("backups/61/firmware/osos-cfw.bin")).unwrap(),
+        fs::read(root.join("backups/61/firmware/reprise.bin")).unwrap(),
         b"latest"
     );
     assert_eq!(
-        fs::read(root.join("backups/62/firmware/osos-cfw.bin")).unwrap(),
+        fs::read(root.join("backups/62/firmware/reprise.bin")).unwrap(),
         b"other"
     );
     for report in reports {
         let json: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
-        assert!(json["files"]["osos-cfw.bin"]["sha256"].is_string());
+        assert!(json["files"]["reprise.bin"]["sha256"].is_string());
     }
     fs::remove_dir_all(root).unwrap();
 }
@@ -233,7 +305,7 @@ fn update_plan_and_completion_are_preserved_in_support_logs() {
     ] {
         let mut job = job(&state);
         let directory = job.directory.clone();
-        job.plan(action).unwrap();
+        job.plan(action, (false, false)).unwrap();
         let outcome = if action == BootloaderAction::Keep {
             InstallOutcome::FilesUpdated
         } else {
@@ -262,6 +334,37 @@ fn update_plan_and_completion_are_preserved_in_support_logs() {
         }));
         fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+fn a_kept_files_uninstall_plans_without_the_removal_phase() {
+    let state = InstallState::default();
+    let mut job = job_for(&state, "uninstall");
+    let directory = job.directory.clone();
+    job.set_weight("removeFiles", 0);
+    job.stage("checkBootloader", "Checking installed bootloader")
+        .unwrap();
+    job.plan_uninstall(false, true).unwrap();
+    job.stage("backup", "Reading boot firmware").unwrap();
+    job.set_fraction(1.0);
+    job.begin_bootloader_removal().unwrap();
+    let plan: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.join("plan.json")).unwrap()).unwrap();
+    assert_eq!(plan["keep_files"], true);
+    let events: Vec<serde_json::Value> = fs::read_to_string(directory.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|event| event["detail"]
+        == "UNINSTALL: keeping RepriseOS files; restoring Apple's bootloader"));
+    // Without the removal phase the backup ends just short of the handoff's share.
+    let handoff = events.last().unwrap();
+    assert_eq!(handoff["stage"], "bootloader");
+    let total = (15 + 148 + 3) as f64;
+    assert!((handoff["progress"].as_f64().unwrap() - (15.0 + 148.0) / total).abs() < 1e-9);
+    drop(job);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
